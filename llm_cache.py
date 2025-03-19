@@ -1,0 +1,175 @@
+"""
+Caches LLM responses
+"""
+import hashlib
+import json
+from typing import Optional, List, Tuple
+from pydantic import BaseModel
+import pandas as pd
+
+from duckdb_handler import DuckDBHandler
+from llm.constants import LLMModel
+
+class LLMCache:
+    def __init__(self, db_handler: DuckDBHandler):
+        self.db_handler = db_handler
+        self._create_cache()
+
+    def get_response(
+            self, 
+            text: str, 
+            model_type: LLMModel,
+            seed: int,
+            max_new_tokens: int,
+            temperature: float,
+            ) -> str:
+        db = self.db_handler.get_connection()
+        text_hash = self.compute_hash(text)
+        call_params = json.dumps({
+                "model_type": model_type.name.value,
+                "seed": seed,
+                "max_new_tokens": max_new_tokens,
+                "temperature": temperature
+                })
+        call_params_hash = self.compute_hash(call_params)
+        query = """
+            SELECT 
+                llm_output
+            FROM cache 
+            WHERE 
+                prompt_hash = ? AND 
+                call_params_hash = ?
+            """
+        result = db.execute(
+                query, 
+                [text_hash, call_params_hash]
+                ).fetchone()
+
+        if result:
+            return result[-1]
+        return None
+
+    def save_response(
+            self, 
+            input_text: str, 
+            llm_output: str, 
+            model_type: LLMModel,
+            seed: Optional[int],
+            max_new_tokens: int,
+            temperature: float
+            ):
+        db = self.db_handler.get_connection()
+        input_text_hash = self.compute_hash(input_text)
+        call_params = json.dumps({
+                "model_type": model_type.name.value,
+                "seed": seed,
+                "max_new_tokens": max_new_tokens,
+                "temperature": temperature
+                })
+        call_params_hash = self.compute_hash(call_params)
+
+        query = """
+            INSERT INTO cache (prompt_hash, call_params_hash, llm_output)
+            VALUES (?, ?, ?)
+        """
+        db.execute(query, [
+                    input_text_hash, 
+                    call_params_hash,
+                    llm_output
+                    ]
+                )
+
+    def save_responses(
+            self, 
+            input_texts: str, 
+            llm_outputs: str, 
+            model_type: LLMModel,
+            seed: Optional[int],
+            max_new_tokens: int,
+            temperature: float
+            ):
+        db = self.db_handler.get_connection()
+        input_texts_hash = [self.compute_hash(input_text) for input_text in input_texts]
+        call_params = json.dumps({
+                "model_type": model_type.name.value,
+                "seed": seed,
+                "max_new_tokens": max_new_tokens,
+                "temperature": temperature
+                })
+        call_params_hash = self.compute_hash(call_params)
+        insert_data = []
+        for input_hash, llm_output in zip(input_texts_hash, llm_outputs):
+            insert_data.append((input_hash,
+                                call_params_hash,
+                                llm_output
+                                ))
+        query = """
+            INSERT INTO cache (prompt_hash, call_params_hash, llm_output)
+            VALUES (?, ?, ?)
+        """
+        db.executemany(query, insert_data)
+
+    def get_responses(
+            self, 
+            texts: [str], 
+            model_type: LLMModel,
+            seed: int,
+            max_new_tokens: int,
+            temperature: float,
+            output_type: BaseModel=None
+            ) -> pd.DataFrame:
+        db = self.db_handler.get_connection()
+        texts_hash = [self.compute_hash(text) for text in texts]
+        text_df = pd.DataFrame({
+                "prompt": texts,
+                "prompt_hash": texts_hash
+            })
+
+        call_params = json.dumps({
+                "model_type": model_type.name.value,
+                "seed": seed,
+                "max_new_tokens": max_new_tokens,
+                "temperature": temperature
+                })
+        call_params_hash = self.compute_hash(call_params)
+        texts_hash_string = ",".join(["'%s'" % text for text in texts_hash])
+
+        query = f"""
+            SELECT 
+                prompt_hash,
+                llm_output
+            FROM cache 
+            WHERE 
+                call_params_hash = ? AND
+                prompt_hash IN ({texts_hash_string})
+            """
+        # TODO: we probably want to grab the most recent line in case there are multiple entries with the same has, though
+        # that also seems somewhat unlikely...?
+        result_df = db.execute(
+                query, 
+                [call_params_hash]
+                ).df()
+
+        if result_df.empty:
+            text_df['llm_output'] = None
+        else:
+            print("CACHE HIT")
+            text_df = text_df.merge(result_df, on="prompt_hash", how="left")
+        return text_df[['prompt', 'llm_output']]
+
+    def compute_hash(self, text: str) -> str:
+        text = text.strip()
+        text = text.encode('utf-8')
+        return hashlib.sha256(text).hexdigest()
+
+    def _create_cache(self):
+        db = self.db_handler.get_connection()
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS cache (
+                prompt_hash VARCHAR,
+                call_params_hash VARCHAR,
+                llm_output TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
