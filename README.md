@@ -26,6 +26,12 @@ $ echo "BEDROCK_ACCESS_TOKEN=<YOUR ACCESS TOKEN>" >> .env
 $ echo "VERSA_API_KEY=<YOUR TOKEN>" >> .env
 ```
 
+For any calls to `LLMApi` in your project repo please load in the enviroment variables
+```
+from dotenv import load_dotenv
+load_dotenv()
+```
+
 ### Development 
 To test any new changes use `test_script.py`
 
