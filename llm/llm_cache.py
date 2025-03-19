@@ -7,7 +7,7 @@ from typing import Optional, List, Tuple
 from pydantic import BaseModel
 import pandas as pd
 
-from duckdb_handler import DuckDBHandler
+from llm.duckdb_handler import DuckDBHandler
 from llm.constants import LLMModel
 
 class LLMCache:
