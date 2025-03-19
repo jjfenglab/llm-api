@@ -11,7 +11,7 @@ For a list of supported models please see [here](https://github.com/jjfenglab/ll
 
 ### LLM Api
 
-To use LLM APIs add a .env file in the root folder of this directory
+To use LLM APIs add a .env file in the root folder of your repo directory (NOTE: do not add this to the root folder of `llm-api` unless you are testing)
 
 ```bash
 $ touch .env

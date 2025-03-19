@@ -8,7 +8,6 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain.globals import set_debug
 
 from pydantic_core import from_json
-from dotenv import load_dotenv
 from tqdm import tqdm
 import os
 import asyncio
@@ -38,7 +37,6 @@ class LLMApi(LLM):
                  timeout=60
                  ):
         super().__init__(seed, model_type, logging)
-        load_dotenv()
         self.cache = cache
         self.timeout = timeout
         self.is_api = True

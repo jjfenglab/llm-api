@@ -1,12 +1,15 @@
+import logging
+import asyncio
+from dotenv import load_dotenv
+
 from llm.llm_api import LLMApi
 from llm.constants import *
 from llm.dataset import *
 from llm.llm_cache import LLMCache
 from llm.error_callback_handler import ErrorCallbackHandler
 from llm.duckdb_handler import DuckDBHandler
-import logging
-import asyncio
 
+load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
