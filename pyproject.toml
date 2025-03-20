@@ -3,8 +3,8 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "llm"  
-version = "1.0.0"  
+name = "lab_llm"  
+version = "0.1.0"  
 description = "API logic to call different LLMs using langchain"
 authors = [{name = "Jean Feng", email = "jean.feng@ucsf.edu"}]  
 readme = "README.md"

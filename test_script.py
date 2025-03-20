@@ -2,12 +2,12 @@ import logging
 import asyncio
 from dotenv import load_dotenv
 
-from llm.llm_api import LLMApi
-from llm.constants import *
-from llm.dataset import *
-from llm.llm_cache import LLMCache
-from llm.error_callback_handler import ErrorCallbackHandler
-from llm.duckdb_handler import DuckDBHandler
+from lab_llm.llm_api import LLMApi
+from lab_llm.constants import *
+from lab_llm.dataset import *
+from lab_llm.llm_cache import LLMCache
+from lab_llm.error_callback_handler import ErrorCallbackHandler
+from lab_llm.duckdb_handler import DuckDBHandler
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -24,7 +24,7 @@ handler = ErrorCallbackHandler(logger)
 api = LLMApi(cache, 10, model, handler, logger)
 
 test_dataset = TextDataset(
-        ["", "what is the color red"], 
+        ["clinical_note", "what is the color red"], 
         )
 
 # prompt = "test"

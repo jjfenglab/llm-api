@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from llm.dataset import TextDataset
+from lab_llm.dataset import TextDataset
 
 class LLM(ABC):
     def __init__(self, seed, model_type: str, logging):

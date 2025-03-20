@@ -8,6 +8,7 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain.globals import set_debug
 
 from pydantic_core import from_json
+from dotenv import load_dotenv
 from tqdm import tqdm
 import os
 import asyncio
@@ -15,17 +16,28 @@ import base64
 import time
 import pandas as pd
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from llm.llm import LLM
-from llm.llm_cache import LLMCache
-import llm.constants as constants
-from llm.error_callback_handler import ErrorCallbackHandler
+from lab_llm.llm import LLM
+from lab_llm.llm_cache import LLMCache
+import lab_llm.constants as constants
+from lab_llm.error_callback_handler import ErrorCallbackHandler
 
 """
 Please set your HF, OpenAI, and Versa tokens in a .env file. Note: The API currently only supports image inference for
 OpenAI models
 """
+
+
+def is_valid(model: BaseModel, data_str: str) -> bool:
+    """
+    Validates data against a Pydantic model and returns True if valid, False otherwise.
+    """
+    try:
+        model.model_validate_json(data_str)
+        return True
+    except ValidationError:
+        return False
 
 class LLMApi(LLM):
     def __init__(self,
@@ -37,6 +49,7 @@ class LLMApi(LLM):
                  timeout=60
                  ):
         super().__init__(seed, model_type, logging)
+        load_dotenv()
         self.cache = cache
         self.timeout = timeout
         self.is_api = True
@@ -182,8 +195,11 @@ class LLMApi(LLM):
                     max_new_tokens, 
                     temperature
                 )
-
-                prompts_to_run = df[df.llm_output.isnull()].prompt.values.tolist()
+                if response_model:
+                    null_mask = [not is_valid(response_model, res) for res in df.llm_output]
+                    prompts_to_run = df.iloc[null_mask].prompt.values.tolist()
+                else:
+                    prompts_to_run = df[df.llm_output.isna()].prompt.values.tolist()
                 try: 
                     if prompts_to_run:
                         batch_results = await self._run_batch(
@@ -202,6 +218,7 @@ class LLMApi(LLM):
                         batch_results = [response_model.model_validate_json(res) for res in raw_results]
                     else:
                         batch_results = raw_results
+                    assert len(batch_results) == len(batch_prompts)
                     if validation_func is not None:
                         validation_func(batch_results)
                         
@@ -223,7 +240,7 @@ class LLMApi(LLM):
         end_time = time.time()
         execution_time = end_time - start_time
         self.logging.info(f"Results took {execution_time} seconds")
-        self.logging.info("NUM RESULTS %d", len(results))
+        self.logging.info("NUM RESULTS %d (%d)", len(results), len(dataset))
         assert len(results) == len(dataset)
         return results
 

@@ -7,8 +7,8 @@ from typing import Optional, List, Tuple
 from pydantic import BaseModel
 import pandas as pd
 
-from llm.duckdb_handler import DuckDBHandler
-from llm.constants import LLMModel
+from lab_llm.duckdb_handler import DuckDBHandler
+from lab_llm.constants import LLMModel
 
 class LLMCache:
     def __init__(self, db_handler: DuckDBHandler):
@@ -135,13 +135,22 @@ class LLMCache:
         texts_hash_string = ",".join(["'%s'" % text for text in texts_hash])
 
         query = f"""
+            WITH ranked_outputs AS (
+                SELECT
+                    prompt_hash,
+                    llm_output,
+                    row_number() OVER (PARTITION BY prompt_hash ORDER BY created_at DESC) AS rn
+                FROM cache
+                WHERE
+                    call_params_hash = ?
+                    AND
+                    prompt_hash IN ({texts_hash_string})
+            )
             SELECT 
                 prompt_hash,
                 llm_output
-            FROM cache 
-            WHERE 
-                call_params_hash = ? AND
-                prompt_hash IN ({texts_hash_string})
+            FROM ranked_outputs 
+            WHERE rn = 1
             """
         # TODO: we probably want to grab the most recent line in case there are multiple entries with the same has, though
         # that also seems somewhat unlikely...?
