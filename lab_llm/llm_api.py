@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -28,12 +28,12 @@ OpenAI models
 """
 
 
-def is_valid(model: BaseModel, data_str: str) -> bool:
+def is_valid(model: BaseModel, data_str: str, context: Optional[Dict] = None) -> bool:
     """
     Validates data against a Pydantic model and returns True if valid, False otherwise.
     """
     try:
-        model.model_validate_json(data_str)
+        model.model_validate_json(data_str, context=context)
         return True
     except ValidationError:
         return False
@@ -167,6 +167,7 @@ class LLMApi(LLM):
             validation_func = None,
             requests_per_second = None,
             response_model:BaseModel=None,
+            validation_context: Optional[Dict] = None,
             ) -> Optional[List[str] | List[BaseModel]]:
         llm = self.get_client(max_new_tokens, temperature, requests_per_second)
         if (response_model is not None) and (not constants.is_meta(self.model_type.name)):
@@ -194,7 +195,7 @@ class LLMApi(LLM):
                     temperature
                 )
                 if response_model:
-                    null_mask = [not is_valid(response_model, res) for res in df.llm_output]
+                    null_mask = [not is_valid(response_model, res, context=validation_context) for res in df.llm_output]
                     prompts_to_run = df.iloc[null_mask].prompt.values.tolist()
                 else:
                     prompts_to_run = df[df.llm_output.isna()].prompt.values.tolist()
@@ -213,7 +214,7 @@ class LLMApi(LLM):
                     raw_results = df.llm_output.values.tolist()
                     self.logging.info(raw_results)
                     if response_model is not None:
-                        batch_results = [response_model.model_validate_json(res) for res in raw_results]
+                        batch_results = [response_model.model_validate_json(res, context=validation_context) for res in raw_results]
                     else:
                         batch_results = raw_results
                     assert len(batch_results) == len(batch_prompts)
