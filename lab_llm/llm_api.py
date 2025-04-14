@@ -45,19 +45,29 @@ class LLMApi(LLM):
                  model_type: constants.LLMModel,
                  error_handler: ErrorCallbackHandler,
                  logging,
-                 timeout=60
+                 timeout: int =60,
+                 return_exceptions: bool=False
                  ):
         super().__init__(seed, model_type, logging)
         self.cache = cache
         self.timeout = timeout
         self.is_api = True
         self.error_handler = error_handler
+        self.return_exceptions = return_exceptions
     
     def _serialize_llm_response(self, llm_response, response_model: BaseModel=None):
-        if response_model is not None:
-            return llm_response.model_dump_json()
-        else:
-            return llm_response.content
+        try:
+            if response_model is not None:
+                return llm_response.model_dump_json()
+            else:
+                return llm_response.content
+        except Exception as e:
+            if self.return_exceptions:
+                self.logging.error(e)
+                return None
+            else:
+                self.logging.error(e)
+                raise Exception(f"Was unable to serialize llm response {e}")
 
     def get_client(self, max_new_tokens=4000, temperature=0, requests_per_second=None):
         if requests_per_second:
@@ -117,6 +127,7 @@ class LLMApi(LLM):
             max_new_tokens=4000, 
             temperature=0,
             response_model:BaseModel=None,
+            validation_context: Optional[Dict] = None,
             ) -> Optional[str | BaseModel]:
         set_debug(True)
         self.logging.info("LLM (%s) prompt %s", self.model_type, prompt)
@@ -129,7 +140,7 @@ class LLMApi(LLM):
         )
         print("CACHED", llm_response)
         if (llm_response is not None) and (response_model is not None):
-            llm_response = response_model.model_validate_json(llm_response)
+            llm_response = response_model.model_validate_json(llm_response, context=validation_context)
         
         if llm_response is None:
             llm = self.get_client(max_new_tokens, temperature)
@@ -169,10 +180,6 @@ class LLMApi(LLM):
             response_model:BaseModel=None,
             validation_context: Optional[Dict] = None,
             ) -> Optional[List[str] | List[BaseModel]]:
-        llm = self.get_client(max_new_tokens, temperature, requests_per_second)
-        if (response_model is not None) and (not constants.is_meta(self.model_type.name)):
-            llm = llm.with_structured_output(response_model)
-        
         if is_image:
             # the collate_fn is used here because passing in the full payload with the base encoded image causing
             # dataloader to break. The image is encoded into base64 after the batch is created
@@ -194,13 +201,18 @@ class LLMApi(LLM):
                     max_new_tokens, 
                     temperature
                 )
-                if response_model:
+                if response_model and (not self.return_exceptions) and (num_retries < (max_retries - 1)):
                     null_mask = [not is_valid(response_model, res, context=validation_context) for res in df.llm_output]
                     prompts_to_run = df.iloc[null_mask].prompt.values.tolist()
                 else:
                     prompts_to_run = df[df.llm_output.isna()].prompt.values.tolist()
+                
                 try: 
                     if prompts_to_run:
+                        llm = self.get_client(max_new_tokens, temperature, requests_per_second)
+                        if (response_model is not None) and (not constants.is_meta(self.model_type.name)):
+                            llm = llm.with_structured_output(response_model)
+
                         batch_results = await self._run_batch(
                                 prompts_to_run, 
                                 llm, 
@@ -214,7 +226,7 @@ class LLMApi(LLM):
                     raw_results = df.llm_output.values.tolist()
                     self.logging.info(raw_results)
                     if response_model is not None:
-                        batch_results = [response_model.model_validate_json(res, context=validation_context) for res in raw_results]
+                        batch_results = [response_model.model_validate_json(res, context=validation_context) if res is not None else None for res in raw_results]
                     else:
                         batch_results = raw_results
                     assert len(batch_results) == len(batch_prompts)
@@ -256,8 +268,8 @@ class LLMApi(LLM):
                 HumanMessage(content=prompt)
             ] for prompt in prompts_to_run]
         
-        batch_results = await llm.abatch(system_prompts)
-        batch_results_strs = [self._serialize_llm_response(response, response_model=response_model) for response in batch_results]
+        batch_results = await llm.abatch(system_prompts, return_exceptions=self.return_exceptions)
+        batch_results_strs = [self._serialize_llm_response(response, response_model=response_model) if response is not None else "" for response in batch_results]
 
         self.cache.save_responses(
             prompts_to_run, 
