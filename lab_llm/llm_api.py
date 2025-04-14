@@ -62,9 +62,12 @@ class LLMApi(LLM):
             else:
                 return llm_response.content
         except Exception as e:
-            print(e)
-            self.logging.error(e)
-            return None
+            if self.return_exceptions:
+                self.logging.error(e)
+                return None
+            else:
+                self.logging.error(e)
+                raise Exception(f"Was unable to serialize llm response {e}")
 
     def get_client(self, max_new_tokens=4000, temperature=0, requests_per_second=None):
         if requests_per_second:
@@ -198,7 +201,7 @@ class LLMApi(LLM):
                     max_new_tokens, 
                     temperature
                 )
-                if response_model and (num_retries < (max_retries - 1)):
+                if response_model and (not self.return_exceptions) and (num_retries < (max_retries - 1)):
                     null_mask = [not is_valid(response_model, res, context=validation_context) for res in df.llm_output]
                     prompts_to_run = df.iloc[null_mask].prompt.values.tolist()
                 else:
