@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
