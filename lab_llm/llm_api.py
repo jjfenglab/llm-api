@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import os
 import time
 from typing import Dict, List, Optional
@@ -265,20 +266,31 @@ class LLMApi(LLM):
                             df.loc[df["prompt"] == prompt, "llm_output"] = response
 
                     raw_results = df.llm_output.values.tolist()
-                    self.logging.info(raw_results)
+                    # self.logging.info(raw_results)
                     if response_model is not None:
-                        batch_results = [
-                            (
-                                response_model.model_validate_json(
-                                    res, context=validation_context
-                                )
-                                if res is not None
-                                else None
-                            )
-                            for res in raw_results
-                        ]
+                        validated_results = []
+                        for res in raw_results:
+                            if res is not None:
+                                try:
+                                    validated_model = (
+                                        response_model.model_validate_json(
+                                            res, context=validation_context
+                                        )
+                                    )
+                                    validated_results.append(validated_model)
+                                except ValidationError as e:
+                                    self.logging.error(
+                                        f"Validation failed for response: {res}. Error: {e}"
+                                    )
+                                    validated_results.append(None)
+                            else:
+                                # Append None if res was None initially
+                                validated_results.append(None)
+                        batch_results = validated_results
                     else:
+                        # No response model, just use raw results
                         batch_results = raw_results
+
                     assert len(batch_results) == len(batch_prompts)
                     if validation_func is not None:
                         validation_func(batch_results)
@@ -324,18 +336,27 @@ class LLMApi(LLM):
         batch_results = await llm.abatch(
             system_prompts, return_exceptions=self.return_exceptions
         )
-        batch_results_strs = [
-            (
-                self._serialize_llm_response(response, response_model=response_model)
-                if response is not None
-                else ""
-            )
-            for response in batch_results
-        ]
+        batch_results_strs = []
+        for response in batch_results:
+            if isinstance(response, Exception):
+                # Log the exception if needed
+                self.logging.error(f"LLM call failed: {response}")
+                batch_results_strs.append(None)  # Append None for failed calls
+            elif response is not None:
+                serialized = self._serialize_llm_response(
+                    response, response_model=response_model
+                )
+                batch_results_strs.append(serialized)
+            else:
+                batch_results_strs.append(None)  # Append None if response was None
 
         self.cache.save_responses(
             prompts_to_run,
-            batch_results_strs,
+            # Filter out Nones before saving? Or save Nones?
+            # Saving Nones might be better for consistency with the returned list.
+            [
+                str(res) if res is not None else None for res in batch_results_strs
+            ],  # Ensure cache gets strings or None
             self.model_type,
             self.seed,
             max_new_tokens,
