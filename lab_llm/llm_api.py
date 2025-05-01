@@ -134,20 +134,31 @@ class LLMApi(LLM):
     ) -> Optional[str | BaseModel]:
         set_debug(True)
         self.logging.info("LLM (%s) prompt %s", self.model_type, prompt)
-        llm_response = self.cache.get_response(
+        found_in_cache, cached_response = self.cache.get_response(
             prompt,
             self.model_type,
             self.seed,
             max_new_tokens,
             temperature,
         )
-        print("CACHED", llm_response)
-        if (llm_response is not None) and (response_model is not None):
-            llm_response = response_model.model_validate_json(
-                llm_response, context=validation_context
-            )
 
-        if llm_response is None:
+        if found_in_cache:
+            self.logging.info("Cache hit")
+            if response_model is not None:
+                if cached_response is not None:
+                    validated_model = response_model.model_validate_json(
+                        cached_response, context=validation_context
+                    )
+                    return validated_model
+                else:
+                    self.logging.info("LLM response (cached) None")
+                    return None
+            else:
+                # No response model, return the cached string directly (could be None)
+                self.logging.info("LLM response (cached) %s", cached_response)
+                return cached_response
+        else:  # Not found in cache
+            self.logging.info("Cache miss")
             llm = self.get_client(max_new_tokens, temperature)
             if (response_model is not None) and (
                 not constants.is_meta(self.model_type.name)
@@ -167,7 +178,7 @@ class LLMApi(LLM):
             )
             self.cache.save_response(
                 prompt,
-                llm_response_content,
+                llm_response_content,  # This will be None if serialization failed or validation failed
                 self.model_type,
                 self.seed,
                 max_new_tokens,
@@ -227,6 +238,9 @@ class LLMApi(LLM):
                 else:
                     prompts_to_run = df[df.llm_output.isna()].prompt.values.tolist()
 
+                    # Identify prompts needing an API call (not found in cache)
+                    prompts_to_run_df = df[~df["found_in_cache"]].copy()
+                    prompts_to_run = prompts_to_run_df["prompt"].tolist()
                 try:
                     if prompts_to_run:
                         llm = self.get_client(
