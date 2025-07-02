@@ -1,12 +1,11 @@
-import asyncio
 import base64
-import json
+import logging
 import os
 import time
 from typing import Dict, List, Optional
 
-import pandas as pd
 from langchain.globals import set_debug
+from langchain_anthropic import ChatAnthropic
 from langchain_aws.chat_models.bedrock_converse import ChatBedrockConverse
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.rate_limiters import InMemoryRateLimiter
@@ -15,27 +14,18 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 import lab_llm.constants as constants
 from lab_llm.error_callback_handler import ErrorCallbackHandler
 from lab_llm.llm import LLM
 from lab_llm.llm_cache import LLMCache
+from lab_llm.utils import is_valid
 
 """
 Please set your HF, OpenAI, and Versa tokens in a .env file. Note: The API currently only supports image inference for
 OpenAI models
 """
-
-
-def is_valid(model: BaseModel, data_str: str, context: Optional[Dict] = None) -> bool:
-    """
-    Validates data against a Pydantic model and returns True if valid, False otherwise.
-    """
-    try:
-        model.model_validate_json(data_str, context=context)
-        return True
-    except ValidationError:
-        return False
 
 
 class LLMApi(LLM):
@@ -105,6 +95,18 @@ class LLMApi(LLM):
                 temperature=temperature,
                 timeout=self.timeout,
                 seed=self.seed,
+                rate_limiter=rate_limiter,
+                callbacks=[self.error_handler],
+            )
+        elif constants.is_anthropic(self.model_type.name):
+            access_token = os.getenv("ANTHROPIC_ACCESS_KEY")
+            return ChatAnthropic(
+                api_key=access_token,
+                model_name=self.model_type.name,
+                max_tokens=max_new_tokens,
+                temperature=temperature,
+                max_retries=0,
+                timeout=self.timeout,
                 rate_limiter=rate_limiter,
                 callbacks=[self.error_handler],
             )
@@ -210,105 +212,63 @@ class LLMApi(LLM):
             )
         else:
             dataloader = DataLoader(dataset, batch_size=batch_size)
-        print("DATASET LEN", len(dataset))
+        self.logging.info(f"DATASET LEN: {len(dataset)}")
 
         start_time = time.time()
         results = []
-        for i, (batch_prompts, backup_batch_prompts) in enumerate(tqdm(dataloader)):
-            got_result = False
-            num_retries = 0
-            while not got_result and (num_retries < max_retries):
-                df = self.cache.get_responses(
-                    batch_prompts if num_retries == 0 else backup_batch_prompts,
-                    self.model_type,
-                    self.seed,
+
+        # Use logging_redirect_tqdm to ensure tqdm progress bars are logged properly
+        if self.logging:
+            # Get all active loggers to redirect
+            loggers_to_redirect = [
+                logging.getLogger(name)
+                for name in logging.root.manager.loggerDict
+                if logging.getLogger(
+                    name
+                ).handlers  # Only include loggers with handlers
+            ]
+            # Also include root logger if it has handlers
+            root_logger = logging.getLogger()
+            if root_logger.handlers:
+                loggers_to_redirect.append(root_logger)
+
+            with logging_redirect_tqdm(loggers=loggers_to_redirect):
+                for i, (batch_prompts, backup_batch_prompts) in enumerate(
+                    tqdm(dataloader, desc="Processing batches", unit="batch")
+                ):
+                    batch_results = await self._process_single_batch(
+                        i,
+                        batch_prompts,
+                        backup_batch_prompts,
+                        max_new_tokens,
+                        temperature,
+                        response_model,
+                        validation_context,
+                        max_retries,
+                        validation_func,
+                        callback,
+                        requests_per_second,
+                    )
+                    results.extend(batch_results)
+        else:
+            # Fallback to regular tqdm if no logger
+            for i, (batch_prompts, backup_batch_prompts) in enumerate(
+                tqdm(dataloader, desc="Processing batches", unit="batch")
+            ):
+                batch_results = await self._process_single_batch(
+                    i,
+                    batch_prompts,
+                    backup_batch_prompts,
                     max_new_tokens,
                     temperature,
+                    response_model,
+                    validation_context,
+                    max_retries,
+                    validation_func,
+                    callback,
+                    requests_per_second,
                 )
-                if (
-                    response_model
-                    and (not self.return_exceptions)
-                    and (num_retries < (max_retries - 1))
-                ):
-                    null_mask = [
-                        not is_valid(response_model, res, context=validation_context)
-                        for res in df.llm_output
-                    ]
-                    prompts_to_run = df.iloc[null_mask].prompt.values.tolist()
-                else:
-                    prompts_to_run = df[df.llm_output.isna()].prompt.values.tolist()
-
-                    # Identify prompts needing an API call (not found in cache)
-                    prompts_to_run_df = df[~df["found_in_cache"]].copy()
-                    prompts_to_run = prompts_to_run_df["prompt"].tolist()
-                try:
-                    if prompts_to_run:
-                        llm = self.get_client(
-                            max_new_tokens, temperature, requests_per_second
-                        )
-                        if (response_model is not None) and (
-                            not constants.is_meta(self.model_type.name)
-                        ):
-                            llm = llm.with_structured_output(response_model)
-
-                        batch_results = await self._run_batch(
-                            prompts_to_run,
-                            llm,
-                            max_new_tokens,
-                            temperature,
-                            response_model=(
-                                response_model
-                                if not constants.is_meta(self.model_type.name)
-                                else None
-                            ),
-                        )
-                        for prompt, response in zip(prompts_to_run, batch_results):
-                            df.loc[df["prompt"] == prompt, "llm_output"] = response
-
-                    raw_results = df.llm_output.values.tolist()
-                    # self.logging.info(raw_results)
-                    if response_model is not None:
-                        validated_results = []
-                        for res in raw_results:
-                            if res is not None:
-                                try:
-                                    validated_model = (
-                                        response_model.model_validate_json(
-                                            res, context=validation_context
-                                        )
-                                    )
-                                    validated_results.append(validated_model)
-                                except ValidationError as e:
-                                    self.logging.error(
-                                        f"Validation failed for response: {res}. Error: {e}"
-                                    )
-                                    validated_results.append(None)
-                            else:
-                                # Append None if res was None initially
-                                validated_results.append(None)
-                        batch_results = validated_results
-                    else:
-                        # No response model, just use raw results
-                        batch_results = raw_results
-
-                    assert len(batch_results) == len(batch_prompts)
-                    if validation_func is not None:
-                        validation_func(batch_results)
-
-                    results += batch_results
-
-                    if callback is not None:
-                        callback(results)
-                    got_result = True
-                except Exception as e:
-                    num_retries += 1
-                    message = f"Failed batch idx {i}. Error {e}, {num_retries}"
-                    print(message)
-                    for res in raw_results:
-                        print("parse", res)
-                    self.logging.error(message)
-                    if num_retries == max_retries:
-                        raise ValueError("Error with LLM batch query")
+                results.extend(batch_results)
 
         end_time = time.time()
         execution_time = end_time - start_time
@@ -316,6 +276,114 @@ class LLMApi(LLM):
         self.logging.info("NUM RESULTS %d (%d)", len(results), len(dataset))
         assert len(results) == len(dataset)
         return results
+
+    async def _process_single_batch(
+        self,
+        batch_idx,
+        batch_prompts,
+        backup_batch_prompts,
+        max_new_tokens,
+        temperature,
+        response_model,
+        validation_context,
+        max_retries,
+        validation_func,
+        callback,
+        requests_per_second,
+    ):
+        got_result = False
+        num_retries = 0
+        while not got_result and (num_retries < max_retries):
+            batch_to_use = batch_prompts if num_retries == 0 else backup_batch_prompts
+            df = self.cache.get_responses(
+                list(batch_to_use),
+                self.model_type,
+                self.seed,
+                max_new_tokens,
+                temperature,
+            )
+            if (
+                response_model
+                and (not self.return_exceptions)
+                and (num_retries < (max_retries - 1))
+            ):
+                null_mask = [
+                    not is_valid(response_model, res, context=validation_context)
+                    for res in df.llm_output
+                ]
+                prompts_to_run = df.iloc[null_mask].prompt.values.tolist()
+            else:
+                prompts_to_run = df[df.llm_output.isna()].prompt.values.tolist()
+
+                # Identify prompts needing an API call (not found in cache)
+                prompts_to_run_df = df[~df["found_in_cache"]].copy()
+                prompts_to_run = prompts_to_run_df["prompt"].tolist()
+            try:
+                if prompts_to_run:
+                    llm = self.get_client(
+                        max_new_tokens, temperature, requests_per_second
+                    )
+                    if (response_model is not None) and (
+                        not constants.is_meta(self.model_type.name)
+                    ):
+                        llm = llm.with_structured_output(response_model)
+
+                    batch_results = await self._run_batch(
+                        prompts_to_run,
+                        llm,
+                        max_new_tokens,
+                        temperature,
+                        response_model=(
+                            response_model
+                            if not constants.is_meta(self.model_type.name)
+                            else None
+                        ),
+                    )
+                    for prompt, response in zip(prompts_to_run, batch_results):
+                        df.loc[df["prompt"] == prompt, "llm_output"] = response
+
+                raw_results = df.llm_output.values.tolist()
+                # self.logging.debug(raw_results)
+                if response_model is not None:
+                    validated_results = []
+                    for res in raw_results:
+                        if res is not None:
+                            try:
+                                validated_model = response_model.model_validate_json(
+                                    res, context=validation_context
+                                )
+                                validated_results.append(validated_model)
+                            except ValidationError as e:
+                                self.logging.error(
+                                    f"Validation failed for response: {res}. Error: {e}"
+                                )
+                                validated_results.append(None)
+                        else:
+                            # Append None if res was None initially
+                            validated_results.append(None)
+                    batch_results = validated_results
+                else:
+                    batch_results = raw_results
+
+                assert len(batch_results) == len(batch_prompts)
+                if validation_func is not None:
+                    validation_func(batch_results)
+
+                if callback is not None:
+                    callback(batch_results)
+                got_result = True
+
+                return batch_results
+            except Exception as e:
+                num_retries += 1
+                message = f"Failed batch idx {batch_idx}. Error {e}, {num_retries}"
+                print(message)
+                if "raw_results" in locals():
+                    for res in raw_results:
+                        print("parse", res)
+                self.logging.error(message)
+                if num_retries == max_retries:
+                    raise ValueError("Error with LLM batch query")
 
     async def _run_batch(
         self,
@@ -367,15 +435,24 @@ class LLMApi(LLM):
 
     def _encode_images(self, batch_data: list[dict, str]) -> list[dict]:
         updated_payloads = []
-        for payload, image_path in batch_data:
-            with open(image_path, "rb") as image_file:
-                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+        for payload, image_paths in batch_data:
+            # Support multiple images separated by "+"
+            if isinstance(image_paths, str):
+                image_paths = image_paths.split("+")
+            elif not isinstance(image_paths, list):
+                image_paths = [image_paths]
 
-            payload.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"},
-                }
-            )
+            for image_path in image_paths:
+                with open(image_path, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+                payload.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}",
+                        },
+                    }
+                )
             updated_payloads.append(payload)
         return updated_payloads
