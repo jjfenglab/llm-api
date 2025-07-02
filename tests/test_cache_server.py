@@ -217,20 +217,14 @@ class TestCacheServerHelperMethods:
         """Test dynamic chunk size calculation based on data size."""
         server = CacheServer(temp_db_path, port=9999)
 
-        # Small data
         small_chunk = server._get_dynamic_chunk_size(4096)  # 4KB
         assert small_chunk <= 4096
 
-        # Medium data
         medium_chunk = server._get_dynamic_chunk_size(32 * 1024)  # 32KB
         assert medium_chunk <= 16 * 1024
 
-        # Large data
         large_chunk = server._get_dynamic_chunk_size(128 * 1024)  # 128KB
         assert large_chunk == server.chunk_size
-
-
-# Tests use msgpack_encode directly instead of a helper method
 
 
 class TestCacheServerConcurrency:
@@ -612,6 +606,3 @@ class TestCacheServerConcurrency:
             server.stop()
             # Give server time to stop
             time.sleep(0.1)
-
-
-# All fixtures are now imported from conftest.py

@@ -5,7 +5,6 @@ Tests for LLMCache functionality.
 from unittest.mock import Mock, patch
 
 import pandas as pd
-import pytest
 
 from lab_llm.constants import LLMModel
 from lab_llm.duckdb_handler import DuckDBHandler
@@ -338,7 +337,9 @@ class TestLLMCacheTemperatureNormalization:
         assert response_int == response
 
         # Retrieve with float temperature
-        found_float, response_float = cache.get_response(prompt, openai_model, 42, 100, 0.0)
+        found_float, response_float = cache.get_response(
+            prompt, openai_model, 42, 100, 0.0
+        )
         assert found_float
         assert response_float == response
 
@@ -351,7 +352,9 @@ class TestLLMCacheTemperatureNormalization:
         cache.save_response(prompt, response, openai_model, 42, 100, 0)
 
         # Retrieve with float temperature
-        found_float, response_float = cache.get_response(prompt, openai_model, 42, 100, 0.0)
+        found_float, response_float = cache.get_response(
+            prompt, openai_model, 42, 100, 0.0
+        )
         assert found_float
         assert response_float == response
 
@@ -382,16 +385,22 @@ class TestLLMCacheTemperatureNormalization:
         """Test mixing save/retrieve operations with different temperature types."""
         # Save one with int, one with float
         cache.save_response("int_prompt", "int_response", openai_model, 42, 100, 0)
-        cache.save_response("float_prompt", "float_response", openai_model, 42, 100, 0.0)
+        cache.save_response(
+            "float_prompt", "float_response", openai_model, 42, 100, 0.0
+        )
 
         # Retrieve both with int temperature
-        df_int = cache.get_responses(["int_prompt", "float_prompt"], openai_model, 42, 100, 0)
+        df_int = cache.get_responses(
+            ["int_prompt", "float_prompt"], openai_model, 42, 100, 0
+        )
         assert df_int["found_in_cache"].all()
         assert df_int.iloc[0]["llm_output"] == "int_response"
         assert df_int.iloc[1]["llm_output"] == "float_response"
 
         # Retrieve both with float temperature
-        df_float = cache.get_responses(["int_prompt", "float_prompt"], openai_model, 42, 100, 0.0)
+        df_float = cache.get_responses(
+            ["int_prompt", "float_prompt"], openai_model, 42, 100, 0.0
+        )
         assert df_float["found_in_cache"].all()
         assert df_float.iloc[0]["llm_output"] == "int_response"
         assert df_float.iloc[1]["llm_output"] == "float_response"
@@ -406,11 +415,19 @@ class TestLLMCacheTemperatureNormalization:
         cache.save_response(prompt, "temp_1", openai_model, 42, 100, 1.0)
 
         # Retrieve each (testing with both int and float where applicable)
-        found_0_int, response_0_int = cache.get_response(prompt, openai_model, 42, 100, 0)
-        found_0_float, response_0_float = cache.get_response(prompt, openai_model, 42, 100, 0.0)
+        found_0_int, response_0_int = cache.get_response(
+            prompt, openai_model, 42, 100, 0
+        )
+        found_0_float, response_0_float = cache.get_response(
+            prompt, openai_model, 42, 100, 0.0
+        )
         found_05, response_05 = cache.get_response(prompt, openai_model, 42, 100, 0.5)
-        found_1_int, response_1_int = cache.get_response(prompt, openai_model, 42, 100, 1)
-        found_1_float, response_1_float = cache.get_response(prompt, openai_model, 42, 100, 1.0)
+        found_1_int, response_1_int = cache.get_response(
+            prompt, openai_model, 42, 100, 1
+        )
+        found_1_float, response_1_float = cache.get_response(
+            prompt, openai_model, 42, 100, 1.0
+        )
 
         # All should be found
         assert all([found_0_int, found_0_float, found_05, found_1_int, found_1_float])
