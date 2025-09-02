@@ -135,7 +135,7 @@ class LLMApi(LLM):
         set_debug(True)
         self.logging.info("LLM (%s) prompt %s", self.model_type, prompt)
         found_in_cache, cached_response = self.cache.get_response(
-            prompt,
+            str(prompt),
             self.model_type,
             self.seed,
             max_new_tokens,
@@ -177,7 +177,7 @@ class LLMApi(LLM):
                 llm_response, response_model=response_model
             )
             self.cache.save_response(
-                prompt,
+                str(prompt),
                 llm_response_content,  # This will be None if serialization failed or validation failed
                 self.model_type,
                 self.seed,
@@ -219,7 +219,7 @@ class LLMApi(LLM):
             num_retries = 0
             while not got_result and (num_retries < max_retries):
                 df = self.cache.get_responses(
-                    batch_prompts if num_retries == 0 else backup_batch_prompts,
+                    self._make_prompts_strs(batch_prompts) if num_retries == 0 else self._make_prompts_strs(backup_batch_prompts),
                     self.model_type,
                     self.seed,
                     max_new_tokens,
@@ -351,7 +351,7 @@ class LLMApi(LLM):
                 batch_results_strs.append(None)  # Append None if response was None
 
         self.cache.save_responses(
-            prompts_to_run,
+            self._make_prompts_strs(prompts_to_run),
             # Filter out Nones before saving? Or save Nones?
             # Saving Nones might be better for consistency with the returned list.
             [
@@ -364,6 +364,8 @@ class LLMApi(LLM):
         )
 
         return batch_results_strs
+
+    _make_prompts_strs = lambda self, prompts: [str(prompt) for prompt in prompts]
 
     def _encode_images(self, batch_data: list[dict, str]) -> list[dict]:
         updated_payloads = []
@@ -378,4 +380,4 @@ class LLMApi(LLM):
                 }
             )
             updated_payloads.append(payload)
-        return updated_payloads
+        return updated_payloads, []
