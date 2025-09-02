@@ -38,4 +38,4 @@ To test any new changes use `test_script.py`
 ### Release Cutting
 This repo is referenced by its release tag. When new functionality is added, you can start using it in your own repo by cutting a release and installing it in your repo
 
-Before cutting a release please ensure new dependencies have been added to `pyproject.toml`. The package installation can be tested by running `llm-api $ pip install -e .`  
+Before cutting a release please ensure new dependencies have been added to `pyproject.toml` and the package version is updated. The package installation can be tested by running `llm-api $ pip install -e .`  
