@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lab_llm"  
-version = "0.1.4"  
+version = "0.1.5"  
 description = "API logic to call different LLMs using langchain"
 authors = [{name = "Jean Feng", email = "jean.feng@ucsf.edu"}]  
 readme = "README.md"
