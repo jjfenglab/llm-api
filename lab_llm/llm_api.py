@@ -46,6 +46,8 @@ class LLMApi(LLM):
         model_type: constants.LLMModel,
         error_handler: ErrorCallbackHandler,
         logging,
+        reasoning_effort: str = "medium",
+        verbosity: str = "medium",
         timeout: int = 60,
         return_exceptions: bool = False,
     ):
@@ -55,6 +57,8 @@ class LLMApi(LLM):
         self.is_api = True
         self.error_handler = error_handler
         self.return_exceptions = return_exceptions
+        self.reasoning_effort = reasoning_effort
+        self.verbosity = verbosity
 
     def _serialize_llm_response(self, llm_response, response_model: BaseModel = None):
         try:
@@ -90,6 +94,8 @@ class LLMApi(LLM):
                 seed=self.seed,
                 timeout=self.timeout,
                 rate_limiter=rate_limiter,
+                reasoning_effort=self.reasoning_effort,
+                verbosity=self.verbosity,
                 callbacks=[self.error_handler],
             )
         elif constants.is_versa(self.model_type.name):
@@ -106,6 +112,8 @@ class LLMApi(LLM):
                 timeout=self.timeout,
                 seed=self.seed,
                 rate_limiter=rate_limiter,
+                reasoning_effort=self.reasoning_effort,
+                verbosity=self.verbosity,
                 callbacks=[self.error_handler],
             )
         elif constants.is_bedrock(self.model_type.name):
