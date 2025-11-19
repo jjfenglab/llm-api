@@ -184,14 +184,18 @@ class LLMApi(LLM):
             llm_response_content = self._serialize_llm_response(
                 llm_response, response_model=response_model
             )
-            self.cache.save_response(
-                str(prompt),
-                llm_response_content,  # This will be None if serialization failed or validation failed
-                self.model_type,
-                self.seed,
-                max_new_tokens,
-                temperature,
-            )
+
+            # Only cache successful LLM responses.
+            # Failed requests (None) are not cached, allowing automatic retry on next run.
+            if llm_response_content is not None:
+                self.cache.save_response(
+                    str(prompt),
+                    llm_response_content,
+                    self.model_type,
+                    self.seed,
+                    max_new_tokens,
+                    temperature,
+                )
 
         self.logging.info("LLM response %s", llm_response)
         return llm_response
@@ -227,7 +231,11 @@ class LLMApi(LLM):
             num_retries = 0
             while not got_result and (num_retries < max_retries):
                 df = self.cache.get_responses(
-                    self._make_prompts_strs(batch_prompts) if num_retries == 0 else self._make_prompts_strs(backup_batch_prompts),
+                    (
+                        self._make_prompts_strs(batch_prompts)
+                        if num_retries == 0
+                        else self._make_prompts_strs(backup_batch_prompts)
+                    ),
                     self.model_type,
                     self.seed,
                     max_new_tokens,
@@ -358,18 +366,23 @@ class LLMApi(LLM):
             else:
                 batch_results_strs.append(None)  # Append None if response was None
 
-        self.cache.save_responses(
-            self._make_prompts_strs(prompts_to_run),
-            # Filter out Nones before saving? Or save Nones?
-            # Saving Nones might be better for consistency with the returned list.
-            [
-                str(res) if res is not None else None for res in batch_results_strs
-            ],  # Ensure cache gets strings or None
-            self.model_type,
-            self.seed,
-            max_new_tokens,
-            temperature,
-        )
+        # Only cache successful responses - filter out None values.
+        successful_prompts = []
+        successful_results = []
+        for prompt, result in zip(prompts_to_run, batch_results_strs):
+            if result is not None:
+                successful_prompts.append(prompt)
+                successful_results.append(str(result))
+
+        if successful_prompts:
+            self.cache.save_responses(
+                self._make_prompts_strs(successful_prompts),
+                successful_results,
+                self.model_type,
+                self.seed,
+                max_new_tokens,
+                temperature,
+            )
 
         return batch_results_strs
 
