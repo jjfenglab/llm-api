@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import time
@@ -60,6 +61,12 @@ class LLMApi(LLM):
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
 
+    def _get_cache_reasoning_params(self):
+        """Only include reasoning params in cache key for models that use them."""
+        if constants.is_reasoning_model(self.model_type.name):
+            return {"reasoning_effort": self.reasoning_effort, "verbosity": self.verbosity}
+        return {"reasoning_effort": None, "verbosity": None}
+
     def _serialize_llm_response(self, llm_response, response_model: BaseModel = None):
         try:
             if response_model is not None:
@@ -86,7 +93,7 @@ class LLMApi(LLM):
 
         if constants.is_openai(self.model_type.name):
             access_token = os.getenv("OPENAI_ACCESS_TOKEN")
-            return ChatOpenAI(
+            kwargs = dict(
                 api_key=access_token,
                 model_name=self.model_type.name,
                 max_tokens=max_new_tokens,
@@ -94,16 +101,18 @@ class LLMApi(LLM):
                 seed=self.seed,
                 timeout=self.timeout,
                 rate_limiter=rate_limiter,
-                reasoning_effort=self.reasoning_effort,
-                verbosity=self.verbosity,
                 callbacks=[self.error_handler],
             )
+            if constants.is_reasoning_model(self.model_type.name):
+                kwargs["reasoning_effort"] = self.reasoning_effort
+                kwargs["verbosity"] = self.verbosity
+            return ChatOpenAI(**kwargs)
         elif constants.is_versa(self.model_type.name):
             api_key = os.environ.get("VERSA_API_KEY")
             resource_endpoint = constants.VERSA_ENDPOINT.replace(
                 "<model_name>", self.model_type.name
             )
-            return AzureChatOpenAI(
+            kwargs = dict(
                 api_key=api_key,
                 api_version=constants.VERSA_API_VERSION,
                 azure_endpoint=resource_endpoint,
@@ -112,10 +121,12 @@ class LLMApi(LLM):
                 timeout=self.timeout,
                 seed=self.seed,
                 rate_limiter=rate_limiter,
-                reasoning_effort=self.reasoning_effort,
-                verbosity=self.verbosity,
                 callbacks=[self.error_handler],
             )
+            if constants.is_reasoning_model(self.model_type.name):
+                kwargs["reasoning_effort"] = self.reasoning_effort
+                kwargs["verbosity"] = self.verbosity
+            return AzureChatOpenAI(**kwargs)
         elif constants.is_bedrock(self.model_type.name):
             access_key = os.getenv("BEDROCK_ACCESS_KEY")
             secret_access_key = os.getenv("BEDROCK_ACCESS_KEY_SECRET")
@@ -148,6 +159,7 @@ class LLMApi(LLM):
             self.seed,
             max_new_tokens,
             temperature,
+            **self._get_cache_reasoning_params(),
         )
 
         if found_in_cache:
@@ -195,6 +207,7 @@ class LLMApi(LLM):
                     self.seed,
                     max_new_tokens,
                     temperature,
+                    **self._get_cache_reasoning_params(),
                 )
 
         self.logging.info("LLM response %s", llm_response)
@@ -240,6 +253,7 @@ class LLMApi(LLM):
                     self.seed,
                     max_new_tokens,
                     temperature,
+                    **self._get_cache_reasoning_params(),
                 )
                 if (
                     response_model
@@ -353,10 +367,37 @@ class LLMApi(LLM):
             system_prompts, return_exceptions=self.return_exceptions
         )
         batch_results_strs = []
-        for response in batch_results:
+        for idx, response in enumerate(batch_results):
             if isinstance(response, Exception):
-                # Log the exception if needed
-                self.logging.error(f"LLM call failed: {response}")
+                # Log the exception with prompt context for error tracking
+                prompt = str(prompts_to_run[idx])
+                self.logging.error(
+                    f"LLM call failed for prompt {idx}: {type(response).__name__}: {response}"
+                )
+
+                # If error tracker is available, log with full context
+                if (
+                    hasattr(self.error_handler, "error_tracker")
+                    and self.error_handler.error_tracker
+                ):
+                    prompt_hash = hashlib.sha256(
+                        prompt.strip().encode("utf-8")
+                    ).hexdigest()
+
+                    self.error_handler.error_tracker.log_error(
+                        error=response,
+                        prompt=prompt,
+                        prompt_hash=prompt_hash,
+                        context={
+                            "model_type": str(self.model_type.name),
+                            "timeout": self.timeout,
+                            "max_tokens": max_new_tokens,
+                            "temperature": temperature,
+                            "batch_index": idx,
+                        },
+                        include_traceback=False,
+                    )
+
                 batch_results_strs.append(None)  # Append None for failed calls
             elif response is not None:
                 serialized = self._serialize_llm_response(
@@ -382,6 +423,7 @@ class LLMApi(LLM):
                 self.seed,
                 max_new_tokens,
                 temperature,
+                **self._get_cache_reasoning_params(),
             )
 
         return batch_results_strs
