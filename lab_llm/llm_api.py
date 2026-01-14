@@ -226,6 +226,7 @@ class LLMApi(LLM):
         requests_per_second=None,
         response_model: BaseModel = None,
         validation_context: Optional[Dict] = None,
+        prompt_cache_key: Optional[str] = None,
     ) -> Optional[List[str] | List[BaseModel]]:
         if is_image:
             # the collate_fn is used here because passing in the full payload with the base encoded image causing
@@ -291,6 +292,7 @@ class LLMApi(LLM):
                                 if not constants.is_meta(self.model_type.name)
                                 else None
                             ),
+                            prompt_cache_key=prompt_cache_key,
                         )
                         for prompt, response in zip(prompts_to_run, batch_results):
                             df.loc[df["prompt"] == prompt, "llm_output"] = response
@@ -354,6 +356,7 @@ class LLMApi(LLM):
         max_new_tokens,
         temperature,
         response_model: BaseModel = None,
+        prompt_cache_key: Optional[str] = None,
     ):
         system_prompts = [
             [
@@ -363,10 +366,15 @@ class LLMApi(LLM):
             for prompt in prompts_to_run
         ]
 
-        batch_results = await llm.abatch(
-            system_prompts, return_exceptions=self.return_exceptions
-        )
+        batch_kwargs = {"return_exceptions": self.return_exceptions}
+        if prompt_cache_key and constants.is_versa(self.model_type.name):
+            batch_kwargs["extra_body"] = {"prompt_cache_key": prompt_cache_key}
+        batch_results = await llm.abatch(system_prompts, **batch_kwargs)
         batch_results_strs = []
+        batch_input_tokens = 0
+        batch_output_tokens = 0
+        batch_cached_tokens = 0
+        batch_reasoning_tokens = 0
         for idx, response in enumerate(batch_results):
             if isinstance(response, Exception):
                 # Log the exception with prompt context for error tracking
@@ -400,12 +408,30 @@ class LLMApi(LLM):
 
                 batch_results_strs.append(None)  # Append None for failed calls
             elif response is not None:
+                # Extract token usage before serializing
+                if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                    usage = response.usage_metadata
+                    batch_input_tokens += usage.get('input_tokens', 0)
+                    batch_output_tokens += usage.get('output_tokens', 0)
+                    # Extract detailed token breakdowns if available
+                    input_details = usage.get('input_token_details') or {}
+                    output_details = usage.get('output_token_details') or {}
+                    batch_cached_tokens += input_details.get('cache_read', 0)
+                    batch_reasoning_tokens += output_details.get('reasoning', 0)
                 serialized = self._serialize_llm_response(
                     response, response_model=response_model
                 )
                 batch_results_strs.append(serialized)
             else:
                 batch_results_strs.append(None)  # Append None if response was None
+
+        # Log batch token usage for rate limit monitoring
+        if batch_input_tokens > 0 or batch_output_tokens > 0:
+            batch_total = batch_input_tokens + batch_output_tokens
+            self.logging.info(
+                f"Batch token usage: input={batch_input_tokens} (cached={batch_cached_tokens}), "
+                f"output={batch_output_tokens} (reasoning={batch_reasoning_tokens}), total={batch_total}"
+            )
 
         # Only cache successful responses - filter out None values.
         successful_prompts = []

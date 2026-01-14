@@ -225,12 +225,17 @@ class LLMCache:
             text_df["llm_output"] = None
             text_df["found_in_cache"] = False
         else:
-            print("CACHE HIT")
-
             merged_df = text_df.merge(result_df, on="prompt_hash", how="left")
-
             found_hashes = set(result_df["prompt_hash"])
             merged_df["found_in_cache"] = merged_df["prompt_hash"].isin(found_hashes)
+
+            n_cached = merged_df["found_in_cache"].sum()
+            n_total = len(text_df)
+            if n_cached == n_total:
+                print(f"CACHE HIT: {n_cached}/{n_total} (full)")
+            else:
+                print(f"CACHE HIT: {n_cached}/{n_total} (partial - {n_total - n_cached} need API calls)")
+
             text_df = merged_df[["prompt", "llm_output", "found_in_cache"]]
 
         return text_df[["prompt", "llm_output", "found_in_cache"]]
