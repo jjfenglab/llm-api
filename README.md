@@ -212,16 +212,16 @@ For a complete example, see [examples/analyze_failures.ipynb](examples/analyze_f
 
 ### Running Tests
 
+Run all tests:
+
 ```bash
-pytest tests/
+pytest tests/ -v
 ```
 
-### Testing Changes
-
-Use `test_script.py` for manual testing:
+Run integration tests (requires API credentials in `.env`):
 
 ```bash
-python test_script.py
+pytest tests/test_integration.py -v
 ```
 
 ### Release Process
