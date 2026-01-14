@@ -109,7 +109,13 @@ class LLMApi(LLM):
             return ChatOpenAI(**kwargs)
         elif constants.is_versa(self.model_type.name):
             api_key = os.environ.get("VERSA_API_KEY")
-            resource_endpoint = constants.VERSA_ENDPOINT.replace(
+            versa_endpoint = os.environ.get("VERSA_ENDPOINT")
+            if not versa_endpoint:
+                raise ValueError(
+                    "VERSA_ENDPOINT environment variable is required for Versa models. "
+                    "Set it to your Azure OpenAI endpoint URL with '<model_name>' as placeholder."
+                )
+            resource_endpoint = versa_endpoint.replace(
                 "<model_name>", self.model_type.name
             )
             kwargs = dict(
@@ -236,7 +242,7 @@ class LLMApi(LLM):
             )
         else:
             dataloader = DataLoader(dataset, batch_size=batch_size)
-        print("DATASET LEN", len(dataset))
+        self.logging.debug("Dataset length: %d", len(dataset))
 
         start_time = time.time()
         results = []
@@ -335,10 +341,9 @@ class LLMApi(LLM):
                 except Exception as e:
                     num_retries += 1
                     message = f"Failed batch idx {i}. Error {e}, {num_retries}"
-                    print(message)
+                    self.logging.warning(message)
                     for res in raw_results:
-                        print("parse", res)
-                    self.logging.error(message)
+                        self.logging.debug("parse result: %s", res)
                     if num_retries == max_retries:
                         raise ValueError("Error with LLM batch query")
 

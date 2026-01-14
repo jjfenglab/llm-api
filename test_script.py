@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import os
 from dotenv import load_dotenv
 
 from lab_llm.llm_api import LLMApi
@@ -16,7 +17,8 @@ logger = logging.getLogger(__name__)
 # model = LLMModel(name=VersaOpenAi.GPT4_O_2024_08)
 # model = LLMModel(name=Cohere.COMMAND_R)
 model = LLMModel(name=OpenAi.GPT4_O_MINI)
-db_handle = DuckDBHandler("/Users/avkothari/Desktop/llm-judge/cache.db")
+cache_path = os.environ.get("LLM_CACHE_PATH", "./cache.db")
+db_handle = DuckDBHandler(cache_path)
 cache = LLMCache(db_handle)
 
 

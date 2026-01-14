@@ -3,7 +3,6 @@ from typing import Union
 
 from pydantic import BaseModel
 
-VERSA_ENDPOINT = "https://unified-api.ucsf.edu/general/openai/deployments/<model_name>/chat/completions?api-version=2024-10-21"
 VERSA_API_VERSION = "2024-10-21"
 AWS_REGION = "us-west-2"
 

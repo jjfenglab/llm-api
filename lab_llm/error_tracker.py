@@ -249,4 +249,3 @@ class ErrorTracker:
         """Clear the error log (use with caution!)"""
         if self.log_file.exists():
             self.log_file.unlink()
-            self.log_file.unlink()
