@@ -25,17 +25,34 @@ class LLMCache:
         seed: int,
         max_new_tokens: int,
         temperature: float,
+        reasoning_effort: Optional[str] = None,
+        verbosity: Optional[str] = None,
     ) -> Tuple[bool, Optional[str]]:
         db = self.db_handler.get_connection()
         text_hash = self.compute_hash(text)
-        call_params = json.dumps(
-            {
-                "model_type": model_type.name.value,
-                "seed": seed,
-                "max_new_tokens": max_new_tokens,
-                "temperature": temperature,
-            }
-        )
+        # Cache key includes all parameters that affect LLM output semantics
+        # Excluded: timeout, requests_per_second, error_handler, logging (operational only)
+        if reasoning_effort is not None and verbosity is not None:
+
+            call_params = json.dumps(
+                {
+                    "model_type": model_type.name.value,
+                    "seed": seed,
+                    "max_new_tokens": max_new_tokens,
+                    "temperature": temperature,
+                    "reasoning_effort": reasoning_effort,
+                    "verbosity": verbosity,
+                }
+            )
+        else:
+            call_params = json.dumps(
+                {
+                    "model_type": model_type.name.value,
+                    "seed": seed,
+                    "max_new_tokens": max_new_tokens,
+                    "temperature": temperature,
+                }
+            )
         call_params_hash = self.compute_hash(call_params)
         query = """
             SELECT 
@@ -59,17 +76,34 @@ class LLMCache:
         seed: Optional[int],
         max_new_tokens: int,
         temperature: float,
+        reasoning_effort: Optional[str] = None,
+        verbosity: Optional[str] = None,
     ):
         db = self.db_handler.get_connection()
         input_text_hash = self.compute_hash(input_text)
-        call_params = json.dumps(
-            {
-                "model_type": model_type.name.value,
-                "seed": seed,
-                "max_new_tokens": max_new_tokens,
-                "temperature": temperature,
-            }
-        )
+        # Cache key includes all parameters that affect LLM output semantics
+        # Excluded: timeout, requests_per_second, error_handler, logging (operational only)
+        # Only include reasoning_effort/verbosity if both are set (for backward compatibility with old cache)
+        if reasoning_effort is not None and verbosity is not None:
+            call_params = json.dumps(
+                {
+                    "model_type": model_type.name.value,
+                    "seed": seed,
+                    "max_new_tokens": max_new_tokens,
+                    "temperature": temperature,
+                    "reasoning_effort": reasoning_effort,
+                    "verbosity": verbosity,
+                }
+            )
+        else:
+            call_params = json.dumps(
+                {
+                    "model_type": model_type.name.value,
+                    "seed": seed,
+                    "max_new_tokens": max_new_tokens,
+                    "temperature": temperature,
+                }
+            )
         call_params_hash = self.compute_hash(call_params)
 
         query = """
@@ -86,17 +120,34 @@ class LLMCache:
         seed: Optional[int],
         max_new_tokens: int,
         temperature: float,
+        reasoning_effort: Optional[str] = None,
+        verbosity: Optional[str] = None,
     ):
         db = self.db_handler.get_connection()
         input_texts_hash = [self.compute_hash(input_text) for input_text in input_texts]
-        call_params = json.dumps(
-            {
-                "model_type": model_type.name.value,
-                "seed": seed,
-                "max_new_tokens": max_new_tokens,
-                "temperature": temperature,
-            }
-        )
+        # Cache key includes all parameters that affect LLM output semantics
+        # Excluded: timeout, requests_per_second, error_handler, logging (operational only)
+        # Only include reasoning_effort/verbosity if both are set (for backward compatibility with old cache)
+        if reasoning_effort is not None and verbosity is not None:
+            call_params = json.dumps(
+                {
+                    "model_type": model_type.name.value,
+                    "seed": seed,
+                    "max_new_tokens": max_new_tokens,
+                    "temperature": temperature,
+                    "reasoning_effort": reasoning_effort,
+                    "verbosity": verbosity,
+                }
+            )
+        else:
+            call_params = json.dumps(
+                {
+                    "model_type": model_type.name.value,
+                    "seed": seed,
+                    "max_new_tokens": max_new_tokens,
+                    "temperature": temperature,
+                }
+            )
         call_params_hash = self.compute_hash(call_params)
         insert_data = []
         for input_hash, llm_output in zip(input_texts_hash, llm_outputs):
@@ -115,19 +166,36 @@ class LLMCache:
         max_new_tokens: int,
         temperature: float,
         output_type: BaseModel = None,
+        reasoning_effort: Optional[str] = None,
+        verbosity: Optional[str] = None,
     ) -> pd.DataFrame:
         db = self.db_handler.get_connection()
         texts_hash = [self.compute_hash(text) for text in texts]
         text_df = pd.DataFrame({"prompt": texts, "prompt_hash": texts_hash})
 
-        call_params = json.dumps(
-            {
-                "model_type": model_type.name.value,
-                "seed": seed,
-                "max_new_tokens": max_new_tokens,
-                "temperature": temperature,
-            }
-        )
+        # Cache key includes all parameters that affect LLM output semantics
+        # Excluded: timeout, requests_per_second, error_handler, logging (operational only)
+        # Only include reasoning_effort/verbosity if both are set (for backward compatibility with old cache)
+        if reasoning_effort is not None and verbosity is not None:
+            call_params = json.dumps(
+                {
+                    "model_type": model_type.name.value,
+                    "seed": seed,
+                    "max_new_tokens": max_new_tokens,
+                    "temperature": temperature,
+                    "reasoning_effort": reasoning_effort,
+                    "verbosity": verbosity,
+                }
+            )
+        else:
+            call_params = json.dumps(
+                {
+                    "model_type": model_type.name.value,
+                    "seed": seed,
+                    "max_new_tokens": max_new_tokens,
+                    "temperature": temperature,
+                }
+            )
         call_params_hash = self.compute_hash(call_params)
         texts_hash_string = ",".join(["'%s'" % text for text in texts_hash])
 
@@ -157,12 +225,17 @@ class LLMCache:
             text_df["llm_output"] = None
             text_df["found_in_cache"] = False
         else:
-            print("CACHE HIT")
-
             merged_df = text_df.merge(result_df, on="prompt_hash", how="left")
-
             found_hashes = set(result_df["prompt_hash"])
             merged_df["found_in_cache"] = merged_df["prompt_hash"].isin(found_hashes)
+
+            n_cached = merged_df["found_in_cache"].sum()
+            n_total = len(text_df)
+            if n_cached == n_total:
+                print(f"CACHE HIT: {n_cached}/{n_total} (full)")
+            else:
+                print(f"CACHE HIT: {n_cached}/{n_total} (partial - {n_total - n_cached} need API calls)")
+
             text_df = merged_df[["prompt", "llm_output", "found_in_cache"]]
 
         return text_df[["prompt", "llm_output", "found_in_cache"]]

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import time
@@ -60,6 +61,12 @@ class LLMApi(LLM):
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
 
+    def _get_cache_reasoning_params(self):
+        """Only include reasoning params in cache key for models that use them."""
+        if constants.is_reasoning_model(self.model_type.name):
+            return {"reasoning_effort": self.reasoning_effort, "verbosity": self.verbosity}
+        return {"reasoning_effort": None, "verbosity": None}
+
     def _serialize_llm_response(self, llm_response, response_model: BaseModel = None):
         try:
             if response_model is not None:
@@ -86,7 +93,7 @@ class LLMApi(LLM):
 
         if constants.is_openai(self.model_type.name):
             access_token = os.getenv("OPENAI_ACCESS_TOKEN")
-            return ChatOpenAI(
+            kwargs = dict(
                 api_key=access_token,
                 model_name=self.model_type.name,
                 max_tokens=max_new_tokens,
@@ -94,16 +101,18 @@ class LLMApi(LLM):
                 seed=self.seed,
                 timeout=self.timeout,
                 rate_limiter=rate_limiter,
-                reasoning_effort=self.reasoning_effort,
-                verbosity=self.verbosity,
                 callbacks=[self.error_handler],
             )
+            if constants.is_reasoning_model(self.model_type.name):
+                kwargs["reasoning_effort"] = self.reasoning_effort
+                kwargs["verbosity"] = self.verbosity
+            return ChatOpenAI(**kwargs)
         elif constants.is_versa(self.model_type.name):
             api_key = os.environ.get("VERSA_API_KEY")
             resource_endpoint = constants.VERSA_ENDPOINT.replace(
                 "<model_name>", self.model_type.name
             )
-            return AzureChatOpenAI(
+            kwargs = dict(
                 api_key=api_key,
                 api_version=constants.VERSA_API_VERSION,
                 azure_endpoint=resource_endpoint,
@@ -112,10 +121,12 @@ class LLMApi(LLM):
                 timeout=self.timeout,
                 seed=self.seed,
                 rate_limiter=rate_limiter,
-                reasoning_effort=self.reasoning_effort,
-                verbosity=self.verbosity,
                 callbacks=[self.error_handler],
             )
+            if constants.is_reasoning_model(self.model_type.name):
+                kwargs["reasoning_effort"] = self.reasoning_effort
+                kwargs["verbosity"] = self.verbosity
+            return AzureChatOpenAI(**kwargs)
         elif constants.is_bedrock(self.model_type.name):
             access_key = os.getenv("BEDROCK_ACCESS_KEY")
             secret_access_key = os.getenv("BEDROCK_ACCESS_KEY_SECRET")
@@ -148,6 +159,7 @@ class LLMApi(LLM):
             self.seed,
             max_new_tokens,
             temperature,
+            **self._get_cache_reasoning_params(),
         )
 
         if found_in_cache:
@@ -184,14 +196,19 @@ class LLMApi(LLM):
             llm_response_content = self._serialize_llm_response(
                 llm_response, response_model=response_model
             )
-            self.cache.save_response(
-                str(prompt),
-                llm_response_content,  # This will be None if serialization failed or validation failed
-                self.model_type,
-                self.seed,
-                max_new_tokens,
-                temperature,
-            )
+
+            # Only cache successful LLM responses.
+            # Failed requests (None) are not cached, allowing automatic retry on next run.
+            if llm_response_content is not None:
+                self.cache.save_response(
+                    str(prompt),
+                    llm_response_content,
+                    self.model_type,
+                    self.seed,
+                    max_new_tokens,
+                    temperature,
+                    **self._get_cache_reasoning_params(),
+                )
 
         self.logging.info("LLM response %s", llm_response)
         return llm_response
@@ -209,6 +226,7 @@ class LLMApi(LLM):
         requests_per_second=None,
         response_model: BaseModel = None,
         validation_context: Optional[Dict] = None,
+        prompt_cache_key: Optional[str] = None,
     ) -> Optional[List[str] | List[BaseModel]]:
         if is_image:
             # the collate_fn is used here because passing in the full payload with the base encoded image causing
@@ -227,11 +245,16 @@ class LLMApi(LLM):
             num_retries = 0
             while not got_result and (num_retries < max_retries):
                 df = self.cache.get_responses(
-                    self._make_prompts_strs(batch_prompts) if num_retries == 0 else self._make_prompts_strs(backup_batch_prompts),
+                    (
+                        self._make_prompts_strs(batch_prompts)
+                        if num_retries == 0
+                        else self._make_prompts_strs(backup_batch_prompts)
+                    ),
                     self.model_type,
                     self.seed,
                     max_new_tokens,
                     temperature,
+                    **self._get_cache_reasoning_params(),
                 )
                 if (
                     response_model
@@ -269,6 +292,7 @@ class LLMApi(LLM):
                                 if not constants.is_meta(self.model_type.name)
                                 else None
                             ),
+                            prompt_cache_key=prompt_cache_key,
                         )
                         for prompt, response in zip(prompts_to_run, batch_results):
                             df.loc[df["prompt"] == prompt, "llm_output"] = response
@@ -332,6 +356,7 @@ class LLMApi(LLM):
         max_new_tokens,
         temperature,
         response_model: BaseModel = None,
+        prompt_cache_key: Optional[str] = None,
     ):
         system_prompts = [
             [
@@ -341,16 +366,58 @@ class LLMApi(LLM):
             for prompt in prompts_to_run
         ]
 
-        batch_results = await llm.abatch(
-            system_prompts, return_exceptions=self.return_exceptions
-        )
+        batch_kwargs = {"return_exceptions": self.return_exceptions}
+        if prompt_cache_key and constants.is_versa(self.model_type.name):
+            batch_kwargs["extra_body"] = {"prompt_cache_key": prompt_cache_key}
+        batch_results = await llm.abatch(system_prompts, **batch_kwargs)
         batch_results_strs = []
-        for response in batch_results:
+        batch_input_tokens = 0
+        batch_output_tokens = 0
+        batch_cached_tokens = 0
+        batch_reasoning_tokens = 0
+        for idx, response in enumerate(batch_results):
             if isinstance(response, Exception):
-                # Log the exception if needed
-                self.logging.error(f"LLM call failed: {response}")
+                # Log the exception with prompt context for error tracking
+                prompt = str(prompts_to_run[idx])
+                self.logging.error(
+                    f"LLM call failed for prompt {idx}: {type(response).__name__}: {response}"
+                )
+
+                # If error tracker is available, log with full context
+                if (
+                    hasattr(self.error_handler, "error_tracker")
+                    and self.error_handler.error_tracker
+                ):
+                    prompt_hash = hashlib.sha256(
+                        prompt.strip().encode("utf-8")
+                    ).hexdigest()
+
+                    self.error_handler.error_tracker.log_error(
+                        error=response,
+                        prompt=prompt,
+                        prompt_hash=prompt_hash,
+                        context={
+                            "model_type": str(self.model_type.name),
+                            "timeout": self.timeout,
+                            "max_tokens": max_new_tokens,
+                            "temperature": temperature,
+                            "batch_index": idx,
+                        },
+                        include_traceback=False,
+                    )
+
                 batch_results_strs.append(None)  # Append None for failed calls
             elif response is not None:
+                # Extract token usage before serializing
+                if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                    usage = response.usage_metadata
+                    batch_input_tokens += usage.get('input_tokens', 0)
+                    batch_output_tokens += usage.get('output_tokens', 0)
+                    # Extract detailed token breakdowns if available
+                    input_details = usage.get('input_token_details') or {}
+                    output_details = usage.get('output_token_details') or {}
+                    batch_cached_tokens += input_details.get('cache_read', 0)
+                    batch_reasoning_tokens += output_details.get('reasoning', 0)
                 serialized = self._serialize_llm_response(
                     response, response_model=response_model
                 )
@@ -358,18 +425,32 @@ class LLMApi(LLM):
             else:
                 batch_results_strs.append(None)  # Append None if response was None
 
-        self.cache.save_responses(
-            self._make_prompts_strs(prompts_to_run),
-            # Filter out Nones before saving? Or save Nones?
-            # Saving Nones might be better for consistency with the returned list.
-            [
-                str(res) if res is not None else None for res in batch_results_strs
-            ],  # Ensure cache gets strings or None
-            self.model_type,
-            self.seed,
-            max_new_tokens,
-            temperature,
-        )
+        # Log batch token usage for rate limit monitoring
+        if batch_input_tokens > 0 or batch_output_tokens > 0:
+            batch_total = batch_input_tokens + batch_output_tokens
+            self.logging.info(
+                f"Batch token usage: input={batch_input_tokens} (cached={batch_cached_tokens}), "
+                f"output={batch_output_tokens} (reasoning={batch_reasoning_tokens}), total={batch_total}"
+            )
+
+        # Only cache successful responses - filter out None values.
+        successful_prompts = []
+        successful_results = []
+        for prompt, result in zip(prompts_to_run, batch_results_strs):
+            if result is not None:
+                successful_prompts.append(prompt)
+                successful_results.append(str(result))
+
+        if successful_prompts:
+            self.cache.save_responses(
+                self._make_prompts_strs(successful_prompts),
+                successful_results,
+                self.model_type,
+                self.seed,
+                max_new_tokens,
+                temperature,
+                **self._get_cache_reasoning_params(),
+            )
 
         return batch_results_strs
 
