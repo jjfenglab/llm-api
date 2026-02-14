@@ -122,7 +122,8 @@ class LLMApi(LLM):
                 api_key=api_key,
                 api_version=constants.VERSA_API_VERSION,
                 azure_endpoint=resource_endpoint,
-                max_tokens=max_new_tokens,
+                #max_tokens=max_new_tokens,
+                max_completion_tokens=max_new_tokens,
                 temperature=temperature,
                 timeout=self.timeout,
                 seed=self.seed,
@@ -131,21 +132,26 @@ class LLMApi(LLM):
             )
             if constants.is_reasoning_model(self.model_type.name):
                 kwargs["reasoning_effort"] = self.reasoning_effort
-                kwargs["verbosity"] = self.verbosity
+                #kwargs["verbosity"] = self.verbosity
+                kwargs["model_kwargs"] = {"verbosity": self.verbosity}
             return AzureChatOpenAI(**kwargs)
         elif constants.is_bedrock(self.model_type.name):
             access_key = os.getenv("BEDROCK_ACCESS_KEY")
             secret_access_key = os.getenv("BEDROCK_ACCESS_KEY_SECRET")
-            return ChatBedrockConverse(
+            base_url = os.getenv("BEDROCK_ENDPOINT_URL")
+            kwargs = dict(
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_access_key,
                 region_name=constants.AWS_REGION,
                 max_tokens=max_new_tokens,
                 temperature=temperature,
-                model_id=constants.BEDROCK_MAPPINGS[self.model_type.name],
+                model=constants.BEDROCK_MAPPINGS[self.model_type.name],
                 rate_limiter=rate_limiter,
                 callbacks=[self.error_handler],
             )
+            if base_url:
+                kwargs["base_url"] = base_url
+            return ChatBedrockConverse(**kwargs)
 
     # Note: if passing in an image here the prompt should contain the base64 encoded image.
     # see _encode_images for an example
@@ -404,7 +410,8 @@ class LLMApi(LLM):
                         context={
                             "model_type": str(self.model_type.name),
                             "timeout": self.timeout,
-                            "max_tokens": max_new_tokens,
+                            #"max_tokens": max_new_tokens,
+                            "max_completion_tokens": max_new_tokens,
                             "temperature": temperature,
                             "batch_index": idx,
                         },

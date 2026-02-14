@@ -31,6 +31,8 @@ from lab_llm.constants import (
     Qwen,
     REASONING_MODELS,
     is_reasoning_model,
+    list_available_models,
+    parse_model_string,
 )
 
 __version__ = "0.1.5"
@@ -57,4 +59,7 @@ __all__ = [
     # Reasoning model utilities
     "REASONING_MODELS",
     "is_reasoning_model",
+    # Model helpers
+    "list_available_models",
+    "parse_model_string",
 ]

@@ -32,6 +32,9 @@ class Cohere(str, Enum):
 
 
 class Claude(str, Enum):
+    HAIKU_4_5 = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    SONNET_4 = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+    OPUS_4_5 = "us.anthropic.claude-opus-4-5-20251101-v1:0"
     HAIKU_3 = "claude-haiku-3"
     HAIKU_3_5 = "anthropic.claude-3-5-haiku-20241022-v1:0"
     SONNET_4_5 = "anthropic.claude-sonnet-4-5-20250929-v1:0"
@@ -61,6 +64,9 @@ BEDROCK_MAPPINGS = {
     Cohere.COMMAND_LIGHT: "cohere.command-light-text-v14",
     Claude.HAIKU_3: "anthropic.claude-3-haiku-20240307-v1:0",
     Claude.HAIKU_3_5: "anthropic.claude-3-5-haiku-20241022-v1:0",
+    Claude.HAIKU_4_5: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    Claude.SONNET_4: "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    Claude.OPUS_4_5: "us.anthropic.claude-opus-4-5-20251101-v1:0",
     Claude.SONNET_4_5: "anthropic.claude-sonnet-4-5-20250929-v1:0",
     Meta.LLAMA_3_2_90B: "us.meta.llama3-2-90b-instruct-v1:0",
     Meta.LLAMA_3_3_70B: "us.meta.llama3-3-70b-instruct-v1:0",
@@ -82,3 +88,54 @@ REASONING_MODELS = {
     VersaOpenAi.GPT5_NANO_2025_08,
 }
 is_reasoning_model = lambda x: x in REASONING_MODELS
+
+
+def get_all_model_enums():
+    """Get all model enum classes."""
+    return [VersaOpenAi, OpenAi, Cohere, Claude, Meta, Qwen]
+
+
+def list_available_models() -> list:
+    """List all available model string values.
+
+    Returns:
+        List of model string values (e.g., 'gpt-4o-2024-08-06')
+    """
+    models = []
+    for enum_class in get_all_model_enums():
+        models.extend([member.value for member in enum_class])
+    return models
+
+
+def _build_model_mapping() -> dict:
+    """Build mapping from model strings to enum members.
+
+    Maps both enum values (e.g., 'gpt-4o-2024-08-06') and enum names
+    (e.g., 'GPT4_O_2024_08') to their corresponding enum members.
+    """
+    mapping = {}
+    for enum_class in get_all_model_enums():
+        for member in enum_class:
+            mapping[member.value] = member  # e.g., 'gpt-4o-2024-08-06' -> VersaOpenAi.GPT4_O_2024_08
+            mapping[member.name] = member   # e.g., 'GPT4_O_2024_08' -> VersaOpenAi.GPT4_O_2024_08
+    return mapping
+
+
+MODEL_MAPPING = _build_model_mapping()
+
+
+def parse_model_string(model_str: str) -> LLMModel:
+    """Parse model string to LLMModel instance.
+
+    Args:
+        model_str: Model string - either enum value (e.g., 'gpt-4o-2024-08-06')
+                   or enum name (e.g., 'GPT4_O_2024_08')
+
+    Returns:
+        LLMModel instance
+
+    Raises:
+        ValueError: If model string is not recognized
+    """
+    assert model_str in MODEL_MAPPING, f"Unsupported model: {model_str}. Available models: {list_available_models()}"
+    return LLMModel(name=MODEL_MAPPING[model_str])
