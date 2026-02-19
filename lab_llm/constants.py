@@ -50,8 +50,14 @@ class Qwen(str, Enum):
     QWEN_3_235 = "qwen.qwen3-235b-a22b-2507-v1:0"
 
 
+class LocalOpenAi(str, Enum):
+    """Sentinel enum for models served via a local OpenAI-compatible endpoint.
+    The actual model name is passed separately via local_model_name."""
+    LOCAL = "local"
+
+
 BedrockModels = Union[Cohere, Claude, Meta, Qwen]
-Models = Union[VersaOpenAi, BedrockModels, OpenAi]
+Models = Union[VersaOpenAi, BedrockModels, OpenAi, LocalOpenAi]
 
 
 class LLMModel(BaseModel):
@@ -77,6 +83,7 @@ is_bedrock = lambda x: isinstance(x, BedrockModels)
 is_meta = lambda x: isinstance(x, Meta)
 is_versa = lambda x: isinstance(x, VersaOpenAi)
 is_openai = lambda x: isinstance(x, OpenAi)
+is_local_openai = lambda x: isinstance(x, LocalOpenAi)
 
 # Reasoning models support reasoning_effort and verbosity parameters
 REASONING_MODELS = {
@@ -92,7 +99,7 @@ is_reasoning_model = lambda x: x in REASONING_MODELS
 
 def get_all_model_enums():
     """Get all model enum classes."""
-    return [VersaOpenAi, OpenAi, Cohere, Claude, Meta, Qwen]
+    return [VersaOpenAi, OpenAi, Cohere, Claude, Meta, Qwen, LocalOpenAi]
 
 
 def list_available_models() -> list:

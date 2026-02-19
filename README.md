@@ -9,7 +9,7 @@ A unified Python library for inference across multiple Large Language Model prov
 
 ## Features
 
-- **Multi-provider support**: Unified API for OpenAI, AWS Bedrock (Claude, Llama, Cohere, Qwen), and Azure OpenAI
+- **Multi-provider support**: Unified API for OpenAI, AWS Bedrock (Claude, Llama, Cohere, Qwen), Azure OpenAI, and local OpenAI-compatible endpoints (vLLM, Ollama, LM Studio)
 - **Response caching**: DuckDB-based caching to avoid redundant API calls and reduce costs
 - **Batch processing**: Async batch inference with configurable concurrency
 - **Structured output**: Pydantic model validation for enforcing response schemas
@@ -111,9 +111,48 @@ load_dotenv()
 - `Cohere.COMMAND_R` - Command R
 - `Qwen.QWEN_3_235` - Qwen 3 235B
 
+### Local OpenAI-Compatible Endpoints
+- `LocalOpenAi.LOCAL` - Any model served via an OpenAI-compatible API (vLLM, Ollama, LM Studio, etc.)
+
 For the complete list, see [lab_llm/constants.py](lab_llm/constants.py).
 
 ## Usage Examples
+
+### Using a Local Model (vLLM, Ollama, etc.)
+
+```python
+from lab_llm.constants import LocalOpenAi, LLMModel
+
+model = LLMModel(name=LocalOpenAi.LOCAL)
+api = LLMApi(
+    cache=cache,
+    seed=42,
+    model_type=model,
+    error_handler=error_handler,
+    logging=logger,
+    base_url="http://localhost:8000/v1",       # Your local server URL
+    local_model_name="Qwen/Qwen3-32B",        # Model name on the server
+)
+
+response = api.get_output("What is the capital of France?")
+```
+
+If your local server does not support structured output (e.g., no guided decoding), disable it:
+
+```python
+api = LLMApi(
+    ...,
+    native_structured_output=False,  # Falls back to manual JSON parsing
+)
+```
+
+You can also configure the endpoint via environment variables instead of constructor args:
+
+```bash
+# .env
+LOCAL_LLM_BASE_URL=http://localhost:8000/v1
+LOCAL_LLM_API_KEY=not-needed  # optional, defaults to "not-needed"
+```
 
 ### Using Structured Output (Pydantic)
 

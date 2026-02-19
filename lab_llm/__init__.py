@@ -29,8 +29,10 @@ from lab_llm.constants import (
     Meta,
     Cohere,
     Qwen,
+    LocalOpenAi,
     REASONING_MODELS,
     is_reasoning_model,
+    is_local_openai,
     list_available_models,
     parse_model_string,
 )
@@ -56,9 +58,11 @@ __all__ = [
     "Meta",
     "Cohere",
     "Qwen",
+    "LocalOpenAi",
     # Reasoning model utilities
     "REASONING_MODELS",
     "is_reasoning_model",
+    "is_local_openai",
     # Model helpers
     "list_available_models",
     "parse_model_string",

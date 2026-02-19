@@ -51,6 +51,9 @@ class LLMApi(LLM):
         verbosity: str = "medium",
         timeout: int = 60,
         return_exceptions: bool = False,
+        base_url: str = None,
+        local_model_name: str = None,
+        native_structured_output: bool = True,
     ):
         super().__init__(seed, model_type, logging)
         self.cache = cache
@@ -60,12 +63,22 @@ class LLMApi(LLM):
         self.return_exceptions = return_exceptions
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
+        self.base_url = base_url
+        self.local_model_name = local_model_name
+        self.native_structured_output = native_structured_output
 
     def _get_cache_reasoning_params(self):
         """Only include reasoning params in cache key for models that use them."""
         if constants.is_reasoning_model(self.model_type.name):
             return {"reasoning_effort": self.reasoning_effort, "verbosity": self.verbosity}
         return {"reasoning_effort": None, "verbosity": None}
+
+    def _supports_native_structured_output(self):
+        if constants.is_meta(self.model_type.name):
+            return False
+        if constants.is_local_openai(self.model_type.name):
+            return self.native_structured_output
+        return True
 
     def _serialize_llm_response(self, llm_response, response_model: BaseModel = None):
         try:
@@ -135,6 +148,20 @@ class LLMApi(LLM):
                 #kwargs["verbosity"] = self.verbosity
                 kwargs["model_kwargs"] = {"verbosity": self.verbosity}
             return AzureChatOpenAI(**kwargs)
+        elif constants.is_local_openai(self.model_type.name):
+            return ChatOpenAI(
+                api_key=os.getenv("LOCAL_LLM_API_KEY", "not-needed"),
+                base_url=self.base_url or os.getenv(
+                    "LOCAL_LLM_BASE_URL", "http://localhost:8000/v1"
+                ),
+                model=self.local_model_name or "default",
+                max_tokens=max_new_tokens,
+                temperature=temperature,
+                seed=self.seed,
+                timeout=self.timeout,
+                rate_limiter=rate_limiter,
+                callbacks=[self.error_handler],
+            )
         elif constants.is_bedrock(self.model_type.name):
             access_key = os.getenv("BEDROCK_ACCESS_KEY")
             secret_access_key = os.getenv("BEDROCK_ACCESS_KEY_SECRET")
@@ -192,16 +219,14 @@ class LLMApi(LLM):
         else:  # Not found in cache
             self.logging.info("Cache miss")
             llm = self.get_client(max_new_tokens, temperature)
-            if (response_model is not None) and (
-                not constants.is_meta(self.model_type.name)
-            ):
+            if (response_model is not None) and self._supports_native_structured_output():
                 llm = llm.with_structured_output(response_model)
             messages = [
                 SystemMessage(content="You are a helpful assistant"),
                 HumanMessage(content=prompt),
             ]
             llm_response = llm.invoke(messages)
-            if (response_model is not None) and constants.is_meta(self.model_type.name):
+            if (response_model is not None) and not self._supports_native_structured_output():
                 llm_response = response_model.model_validate(
                     from_json(llm_response.content)
                 )
@@ -289,9 +314,7 @@ class LLMApi(LLM):
                         llm = self.get_client(
                             max_new_tokens, temperature, requests_per_second
                         )
-                        if (response_model is not None) and (
-                            not constants.is_meta(self.model_type.name)
-                        ):
+                        if (response_model is not None) and self._supports_native_structured_output():
                             llm = llm.with_structured_output(response_model)
 
                         batch_results = await self._run_batch(
@@ -301,7 +324,7 @@ class LLMApi(LLM):
                             temperature,
                             response_model=(
                                 response_model
-                                if not constants.is_meta(self.model_type.name)
+                                if self._supports_native_structured_output()
                                 else None
                             ),
                             prompt_cache_key=prompt_cache_key,
