@@ -21,6 +21,7 @@ import lab_llm.constants as constants
 from lab_llm.error_callback_handler import ErrorCallbackHandler
 from lab_llm.llm import LLM
 from lab_llm.llm_cache import LLMCache
+from lab_llm.usage_callback_handler import UsageCallbackHandler
 
 """
 Please set your HF, OpenAI, and Versa tokens in a .env file. Note: The API currently only supports image inference for
@@ -51,6 +52,7 @@ class LLMApi(LLM):
         verbosity: str = "medium",
         timeout: int = 60,
         return_exceptions: bool = False,
+        track_usage: bool = False,
     ):
         super().__init__(seed, model_type, logging)
         self.cache = cache
@@ -60,12 +62,68 @@ class LLMApi(LLM):
         self.return_exceptions = return_exceptions
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
+        self.track_usage = track_usage
+        self.usage_handler = UsageCallbackHandler() if track_usage else None
 
     def _get_cache_reasoning_params(self):
         """Only include reasoning params in cache key for models that use them."""
         if constants.is_reasoning_model(self.model_type.name):
             return {"reasoning_effort": self.reasoning_effort, "verbosity": self.verbosity}
         return {"reasoning_effort": None, "verbosity": None}
+
+    @staticmethod
+    def _format_usage_line(prefix, input_tokens, output_tokens,
+                           cached_tokens=0, reasoning_tokens=0, suffix=""):
+        """Format a token usage line. Shows detail breakdowns when present."""
+        parts = [f"{input_tokens:,} input"]
+        if cached_tokens:
+            parts[0] += f" ({cached_tokens:,} cached)"
+        parts.append(f"{output_tokens:,} output")
+        if reasoning_tokens:
+            parts[1] += f" ({reasoning_tokens:,} reasoning)"
+        msg = f"{prefix}: {' / '.join(parts)}"
+        if suffix:
+            msg += f" {suffix}"
+        return msg
+
+    def _report_usage(self, usage: dict, cached: bool = False):
+        """Print and log token usage if track_usage is enabled."""
+        if not self.track_usage:
+            return
+
+        if cached:
+            msg = "Token usage: 0 input / 0 output (cached)"
+        elif usage is None:
+            return
+        else:
+            msg = self._format_usage_line(
+                "Token usage",
+                usage.get("input_tokens", 0),
+                usage.get("output_tokens", 0),
+                usage.get("cached_tokens", 0),
+                usage.get("reasoning_tokens", 0),
+            )
+
+        print(msg)
+        self.logging.info(msg)
+
+    def _report_batch_usage(
+        self, input_tokens, output_tokens, cached_tokens, reasoning_tokens, num_queries
+    ):
+        """Print and log batch token usage if track_usage is enabled."""
+        if not self.track_usage:
+            return
+        if input_tokens == 0 and output_tokens == 0:
+            return
+
+        msg = self._format_usage_line(
+            "Batch token usage",
+            input_tokens, output_tokens, cached_tokens, reasoning_tokens,
+            suffix=f"({num_queries} queries)",
+        )
+
+        print(msg)
+        self.logging.info(msg)
 
     def _serialize_llm_response(self, llm_response, response_model: BaseModel = None):
         try:
@@ -80,6 +138,13 @@ class LLMApi(LLM):
             else:
                 self.logging.error(e)
                 raise Exception(f"Was unable to serialize llm response {e}")
+
+    def _get_callbacks(self):
+        """Build the callbacks list, including usage handler if tracking is enabled."""
+        callbacks = [self.error_handler]
+        if self.usage_handler is not None:
+            callbacks.append(self.usage_handler)
+        return callbacks
 
     def get_client(self, max_new_tokens=4000, temperature=0, requests_per_second=None):
         if requests_per_second:
@@ -101,7 +166,7 @@ class LLMApi(LLM):
                 seed=self.seed,
                 timeout=self.timeout,
                 rate_limiter=rate_limiter,
-                callbacks=[self.error_handler],
+                callbacks=self._get_callbacks(),
             )
             if constants.is_reasoning_model(self.model_type.name):
                 kwargs["reasoning_effort"] = self.reasoning_effort
@@ -128,7 +193,7 @@ class LLMApi(LLM):
                 timeout=self.timeout,
                 seed=self.seed,
                 rate_limiter=rate_limiter,
-                callbacks=[self.error_handler],
+                callbacks=self._get_callbacks(),
             )
             if constants.is_reasoning_model(self.model_type.name):
                 kwargs["reasoning_effort"] = self.reasoning_effort
@@ -147,7 +212,7 @@ class LLMApi(LLM):
                 temperature=temperature,
                 model=constants.BEDROCK_MAPPINGS[self.model_type.name],
                 rate_limiter=rate_limiter,
-                callbacks=[self.error_handler],
+                callbacks=self._get_callbacks(),
             )
             if base_url:
                 kwargs["base_url"] = base_url
@@ -176,6 +241,7 @@ class LLMApi(LLM):
 
         if found_in_cache:
             self.logging.info("Cache hit")
+            self._report_usage(None, cached=True)
             if response_model is not None:
                 if cached_response is not None:
                     validated_model = response_model.model_validate_json(
@@ -191,6 +257,8 @@ class LLMApi(LLM):
                 return cached_response
         else:  # Not found in cache
             self.logging.info("Cache miss")
+            if self.usage_handler is not None:
+                self.usage_handler.reset()
             llm = self.get_client(max_new_tokens, temperature)
             if (response_model is not None) and (
                 not constants.is_meta(self.model_type.name)
@@ -201,6 +269,8 @@ class LLMApi(LLM):
                 HumanMessage(content=prompt),
             ]
             llm_response = llm.invoke(messages)
+            if self.usage_handler is not None:
+                self._report_usage(self.usage_handler.last_usage)
             if (response_model is not None) and constants.is_meta(self.model_type.name):
                 llm_response = response_model.model_validate(
                     from_json(llm_response.content)
@@ -420,16 +490,20 @@ class LLMApi(LLM):
 
                 batch_results_strs.append(None)  # Append None for failed calls
             elif response is not None:
-                # Extract token usage before serializing
+                # Extract token usage before serializing.
+                # Uses the shared parse_usage_metadata() so extraction logic
+                # stays in one place (the callback handler captures usage for
+                # single calls; here we read directly from batch responses
+                # because abatch() returns a list with no per-item callbacks).
                 if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                    usage = response.usage_metadata
-                    batch_input_tokens += usage.get('input_tokens', 0)
-                    batch_output_tokens += usage.get('output_tokens', 0)
-                    # Extract detailed token breakdowns if available
-                    input_details = usage.get('input_token_details') or {}
-                    output_details = usage.get('output_token_details') or {}
-                    batch_cached_tokens += input_details.get('cache_read', 0)
-                    batch_reasoning_tokens += output_details.get('reasoning', 0)
+                    parsed = UsageCallbackHandler.parse_usage_metadata(
+                        response.usage_metadata
+                    )
+                    if parsed:
+                        batch_input_tokens += parsed.get('input_tokens', 0)
+                        batch_output_tokens += parsed.get('output_tokens', 0)
+                        batch_cached_tokens += parsed.get('cached_tokens', 0)
+                        batch_reasoning_tokens += parsed.get('reasoning_tokens', 0)
                 serialized = self._serialize_llm_response(
                     response, response_model=response_model
                 )
@@ -444,6 +518,13 @@ class LLMApi(LLM):
                 f"Batch token usage: input={batch_input_tokens} (cached={batch_cached_tokens}), "
                 f"output={batch_output_tokens} (reasoning={batch_reasoning_tokens}), total={batch_total}"
             )
+        self._report_batch_usage(
+            batch_input_tokens,
+            batch_output_tokens,
+            batch_cached_tokens,
+            batch_reasoning_tokens,
+            len(prompts_to_run),
+        )
 
         # Only cache successful responses - filter out None values.
         successful_prompts = []
