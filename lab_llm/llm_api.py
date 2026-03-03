@@ -170,7 +170,7 @@ class LLMApi(LLM):
             )
             if constants.is_reasoning_model(self.model_type.name):
                 kwargs["reasoning_effort"] = self.reasoning_effort
-                kwargs["verbosity"] = self.verbosity
+                kwargs["model_kwargs"] = {"extra_body": {"verbosity": self.verbosity}}
             return ChatOpenAI(**kwargs)
         elif constants.is_versa(self.model_type.name):
             api_key = os.environ.get("VERSA_API_KEY")
@@ -187,8 +187,6 @@ class LLMApi(LLM):
                 api_key=api_key,
                 api_version=constants.VERSA_API_VERSION,
                 azure_endpoint=resource_endpoint,
-                #max_tokens=max_new_tokens,
-                max_completion_tokens=max_new_tokens,
                 temperature=temperature,
                 timeout=self.timeout,
                 seed=self.seed,
@@ -196,9 +194,13 @@ class LLMApi(LLM):
                 callbacks=self._get_callbacks(),
             )
             if constants.is_reasoning_model(self.model_type.name):
+                kwargs["max_completion_tokens"] = max_new_tokens
                 kwargs["reasoning_effort"] = self.reasoning_effort
-                #kwargs["verbosity"] = self.verbosity
-                kwargs["model_kwargs"] = {"verbosity": self.verbosity}
+                kwargs["model_kwargs"] = {"extra_body": {"verbosity": self.verbosity}}
+                del kwargs["temperature"]
+                del kwargs["seed"]
+            else:
+                kwargs["max_tokens"] = max_new_tokens
             return AzureChatOpenAI(**kwargs)
         elif constants.is_bedrock(self.model_type.name):
             access_key = os.getenv("BEDROCK_ACCESS_KEY")
