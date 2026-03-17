@@ -53,6 +53,7 @@ class LLMApi(LLM):
         timeout: int = 60,
         return_exceptions: bool = False,
         track_usage: bool = False,
+        streaming: bool = False,
     ):
         super().__init__(seed, model_type, logging)
         self.cache = cache
@@ -71,6 +72,7 @@ class LLMApi(LLM):
             "cached_tokens": 0,
             "reasoning_tokens": 0,
         }
+        self.streaming = streaming
 
     def _get_cache_reasoning_params(self):
         """Only include reasoning params in cache key for models that use them."""
@@ -239,6 +241,9 @@ class LLMApi(LLM):
                 rate_limiter=rate_limiter,
                 callbacks=self._get_callbacks(),
             )
+            if self.streaming:
+                kwargs["streaming"] = True
+                kwargs["stream_usage"] = True
             if constants.is_reasoning_model(self.model_type.name):
                 kwargs["max_completion_tokens"] = max_new_tokens
                 kwargs["reasoning_effort"] = self.reasoning_effort
