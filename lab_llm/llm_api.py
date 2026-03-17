@@ -64,6 +64,13 @@ class LLMApi(LLM):
         self.verbosity = verbosity
         self.track_usage = track_usage
         self.usage_handler = UsageCallbackHandler() if track_usage else None
+        self._cumulative_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+        }
 
     def _get_cache_reasoning_params(self):
         """Only include reasoning params in cache key for models that use them."""
@@ -91,6 +98,9 @@ class LLMApi(LLM):
         if not self.track_usage:
             return
 
+        if usage and not cached:
+            self._accumulate_usage(usage)
+
         if cached:
             msg = "Token usage: 0 input / 0 output (cached)"
         elif usage is None:
@@ -113,6 +123,15 @@ class LLMApi(LLM):
         """Print and log batch token usage if track_usage is enabled."""
         if not self.track_usage:
             return
+
+        self._accumulate_usage({
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "cached_tokens": cached_tokens,
+            "reasoning_tokens": reasoning_tokens,
+        })
+
         if input_tokens == 0 and output_tokens == 0:
             return
 
@@ -122,6 +141,33 @@ class LLMApi(LLM):
             suffix=f"({num_queries} queries)",
         )
 
+        print(msg)
+        self.logging.info(msg)
+
+    def _accumulate_usage(self, usage: dict):
+        """Add usage to cumulative totals."""
+        if not usage:
+            return
+        for key in self._cumulative_usage:
+            self._cumulative_usage[key] += usage.get(key, 0)
+
+    @property
+    def total_usage(self) -> dict:
+        """Return cumulative token usage across all calls."""
+        return dict(self._cumulative_usage)
+
+    def report_overall_usage(self):
+        """Print and log cumulative token usage across all calls."""
+        if not self.track_usage:
+            return
+        u = self._cumulative_usage
+        if u["input_tokens"] == 0 and u["output_tokens"] == 0:
+            return
+        msg = self._format_usage_line(
+            "Total token usage",
+            u["input_tokens"], u["output_tokens"],
+            u["cached_tokens"], u["reasoning_tokens"],
+        )
         print(msg)
         self.logging.info(msg)
 
@@ -364,7 +410,7 @@ class LLMApi(LLM):
                         if (response_model is not None) and (
                             not constants.is_meta(self.model_type.name)
                         ):
-                            llm = llm.with_structured_output(response_model)
+                            llm = llm.with_structured_output(response_model, include_raw=True)
 
                         batch_results = await self._run_batch(
                             prompts_to_run,
@@ -492,23 +538,33 @@ class LLMApi(LLM):
 
                 batch_results_strs.append(None)  # Append None for failed calls
             elif response is not None:
-                # Extract token usage before serializing.
-                # Uses the shared parse_usage_metadata() so extraction logic
-                # stays in one place (the callback handler captures usage for
-                # single calls; here we read directly from batch responses
-                # because abatch() returns a list with no per-item callbacks).
-                if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                    parsed = UsageCallbackHandler.parse_usage_metadata(
-                        response.usage_metadata
+                # When include_raw=True, response is {"raw": AIMessage, "parsed": Model}
+                # Otherwise response is an AIMessage (no structured output)
+                raw_msg = response
+                actual_response = response
+                if isinstance(response, dict) and "raw" in response:
+                    raw_msg = response["raw"]
+                    actual_response = response["parsed"]
+
+                if hasattr(raw_msg, 'usage_metadata') and raw_msg.usage_metadata:
+                    parsed_usage = UsageCallbackHandler.parse_usage_metadata(
+                        raw_msg.usage_metadata
                     )
-                    if parsed:
-                        batch_input_tokens += parsed.get('input_tokens', 0)
-                        batch_output_tokens += parsed.get('output_tokens', 0)
-                        batch_cached_tokens += parsed.get('cached_tokens', 0)
-                        batch_reasoning_tokens += parsed.get('reasoning_tokens', 0)
-                serialized = self._serialize_llm_response(
-                    response, response_model=response_model
-                )
+                    if parsed_usage:
+                        batch_input_tokens += parsed_usage.get('input_tokens', 0)
+                        batch_output_tokens += parsed_usage.get('output_tokens', 0)
+                        batch_cached_tokens += parsed_usage.get('cached_tokens', 0)
+                        batch_reasoning_tokens += parsed_usage.get('reasoning_tokens', 0)
+
+                if actual_response is not None:
+                    serialized = self._serialize_llm_response(
+                        actual_response, response_model=response_model
+                    )
+                else:
+                    self.logging.error(
+                        f"Structured output parsing failed: {response.get('parsing_error')}"
+                    )
+                    serialized = None
                 batch_results_strs.append(serialized)
             else:
                 batch_results_strs.append(None)  # Append None if response was None

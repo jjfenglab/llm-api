@@ -55,16 +55,18 @@ class UsageCallbackHandler(BaseCallbackHandler):
 
         input_tokens = usage.get("input_tokens", 0)
         output_tokens = usage.get("output_tokens", 0)
-        result = {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": input_tokens + output_tokens,
-        }
 
         input_details = usage.get("input_token_details") or {}
         output_details = usage.get("output_token_details") or {}
         cached = input_details.get("cache_read", 0)
         reasoning = output_details.get("reasoning", 0)
+
+        # Use provider's total_tokens (includes reasoning) when available
+        result = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": usage.get("total_tokens", input_tokens + output_tokens),
+        }
         if cached:
             result["cached_tokens"] = cached
         if reasoning:
