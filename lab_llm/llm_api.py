@@ -21,6 +21,7 @@ import lab_llm.constants as constants
 from lab_llm.error_callback_handler import ErrorCallbackHandler
 from lab_llm.llm import LLM
 from lab_llm.llm_cache import LLMCache
+from lab_llm.usage_callback_handler import UsageCallbackHandler
 
 """
 Please set your HF, OpenAI, and Versa tokens in a .env file. Note: The API currently only supports image inference for
@@ -51,6 +52,7 @@ class LLMApi(LLM):
         verbosity: str = "medium",
         timeout: int = 60,
         return_exceptions: bool = False,
+        track_usage: bool = False,
     ):
         super().__init__(seed, model_type, logging)
         self.cache = cache
@@ -60,12 +62,114 @@ class LLMApi(LLM):
         self.return_exceptions = return_exceptions
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
+        self.track_usage = track_usage
+        self.usage_handler = UsageCallbackHandler() if track_usage else None
+        self._cumulative_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+        }
 
     def _get_cache_reasoning_params(self):
         """Only include reasoning params in cache key for models that use them."""
         if constants.is_reasoning_model(self.model_type.name):
             return {"reasoning_effort": self.reasoning_effort, "verbosity": self.verbosity}
         return {"reasoning_effort": None, "verbosity": None}
+
+    @staticmethod
+    def _format_usage_line(prefix, input_tokens, output_tokens,
+                           cached_tokens=0, reasoning_tokens=0, suffix=""):
+        """Format a token usage line. Shows detail breakdowns when present."""
+        parts = [f"{input_tokens:,} input"]
+        if cached_tokens:
+            parts[0] += f" ({cached_tokens:,} cached)"
+        parts.append(f"{output_tokens:,} output")
+        if reasoning_tokens:
+            parts[1] += f" ({reasoning_tokens:,} reasoning)"
+        msg = f"{prefix}: {' / '.join(parts)}"
+        if suffix:
+            msg += f" {suffix}"
+        return msg
+
+    def _report_usage(self, usage: dict, cached: bool = False):
+        """Print and log token usage if track_usage is enabled."""
+        if not self.track_usage:
+            return
+
+        if usage and not cached:
+            self._accumulate_usage(usage)
+
+        if cached:
+            msg = "Token usage: 0 input / 0 output (cached)"
+        elif usage is None:
+            return
+        else:
+            msg = self._format_usage_line(
+                "Token usage",
+                usage.get("input_tokens", 0),
+                usage.get("output_tokens", 0),
+                usage.get("cached_tokens", 0),
+                usage.get("reasoning_tokens", 0),
+            )
+
+        print(msg)
+        self.logging.info(msg)
+
+    def _report_batch_usage(
+        self, input_tokens, output_tokens, cached_tokens, reasoning_tokens, num_queries
+    ):
+        """Print and log batch token usage if track_usage is enabled."""
+        if not self.track_usage:
+            return
+
+        self._accumulate_usage({
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "cached_tokens": cached_tokens,
+            "reasoning_tokens": reasoning_tokens,
+        })
+
+        if input_tokens == 0 and output_tokens == 0:
+            return
+
+        msg = self._format_usage_line(
+            "Batch token usage",
+            input_tokens, output_tokens, cached_tokens, reasoning_tokens,
+            suffix=f"({num_queries} queries)",
+        )
+
+        print(msg)
+        self.logging.info(msg)
+
+    def _accumulate_usage(self, usage: dict):
+        """Add usage to cumulative totals."""
+        if not usage:
+            return
+        for key in self._cumulative_usage:
+            self._cumulative_usage[key] += usage.get(key, 0)
+
+    @property
+    def total_usage(self) -> dict:
+        """Return cumulative token usage across all calls."""
+        return dict(self._cumulative_usage)
+
+    def report_overall_usage(self):
+        """Print and log cumulative token usage across all calls."""
+        if not self.track_usage:
+            return
+        u = self._cumulative_usage
+        if u["input_tokens"] == 0 and u["output_tokens"] == 0:
+            return
+        msg = self._format_usage_line(
+            "Total token usage",
+            u["input_tokens"], u["output_tokens"],
+            u["cached_tokens"], u["reasoning_tokens"],
+        )
+        print(msg)
+        self.logging.info(msg)
 
     def _serialize_llm_response(self, llm_response, response_model: BaseModel = None):
         try:
@@ -80,6 +184,13 @@ class LLMApi(LLM):
             else:
                 self.logging.error(e)
                 raise Exception(f"Was unable to serialize llm response {e}")
+
+    def _get_callbacks(self):
+        """Build the callbacks list, including usage handler if tracking is enabled."""
+        callbacks = [self.error_handler]
+        if self.usage_handler is not None:
+            callbacks.append(self.usage_handler)
+        return callbacks
 
     def get_client(self, max_new_tokens=4000, temperature=0, requests_per_second=None):
         if requests_per_second:
@@ -101,11 +212,11 @@ class LLMApi(LLM):
                 seed=self.seed,
                 timeout=self.timeout,
                 rate_limiter=rate_limiter,
-                callbacks=[self.error_handler],
+                callbacks=self._get_callbacks(),
             )
             if constants.is_reasoning_model(self.model_type.name):
                 kwargs["reasoning_effort"] = self.reasoning_effort
-                kwargs["verbosity"] = self.verbosity
+                kwargs["model_kwargs"] = {"extra_body": {"verbosity": self.verbosity}}
             return ChatOpenAI(**kwargs)
         elif constants.is_versa(self.model_type.name):
             api_key = os.environ.get("VERSA_API_KEY")
@@ -122,18 +233,20 @@ class LLMApi(LLM):
                 api_key=api_key,
                 api_version=constants.VERSA_API_VERSION,
                 azure_endpoint=resource_endpoint,
-                #max_tokens=max_new_tokens,
-                max_completion_tokens=max_new_tokens,
                 temperature=temperature,
                 timeout=self.timeout,
                 seed=self.seed,
                 rate_limiter=rate_limiter,
-                callbacks=[self.error_handler],
+                callbacks=self._get_callbacks(),
             )
             if constants.is_reasoning_model(self.model_type.name):
+                kwargs["max_completion_tokens"] = max_new_tokens
                 kwargs["reasoning_effort"] = self.reasoning_effort
-                #kwargs["verbosity"] = self.verbosity
-                kwargs["model_kwargs"] = {"verbosity": self.verbosity}
+                kwargs["model_kwargs"] = {"extra_body": {"verbosity": self.verbosity}}
+                del kwargs["temperature"]
+                del kwargs["seed"]
+            else:
+                kwargs["max_tokens"] = max_new_tokens
             return AzureChatOpenAI(**kwargs)
         elif constants.is_bedrock(self.model_type.name):
             access_key = os.getenv("BEDROCK_ACCESS_KEY")
@@ -147,7 +260,7 @@ class LLMApi(LLM):
                 temperature=temperature,
                 model=constants.BEDROCK_MAPPINGS[self.model_type.name],
                 rate_limiter=rate_limiter,
-                callbacks=[self.error_handler],
+                callbacks=self._get_callbacks(),
             )
             if base_url:
                 kwargs["base_url"] = base_url
@@ -176,6 +289,7 @@ class LLMApi(LLM):
 
         if found_in_cache:
             self.logging.info("Cache hit")
+            self._report_usage(None, cached=True)
             if response_model is not None:
                 if cached_response is not None:
                     validated_model = response_model.model_validate_json(
@@ -191,6 +305,8 @@ class LLMApi(LLM):
                 return cached_response
         else:  # Not found in cache
             self.logging.info("Cache miss")
+            if self.usage_handler is not None:
+                self.usage_handler.reset()
             llm = self.get_client(max_new_tokens, temperature)
             if (response_model is not None) and (
                 not constants.is_meta(self.model_type.name)
@@ -201,6 +317,8 @@ class LLMApi(LLM):
                 HumanMessage(content=prompt),
             ]
             llm_response = llm.invoke(messages)
+            if self.usage_handler is not None:
+                self._report_usage(self.usage_handler.last_usage)
             if (response_model is not None) and constants.is_meta(self.model_type.name):
                 llm_response = response_model.model_validate(
                     from_json(llm_response.content)
@@ -292,7 +410,7 @@ class LLMApi(LLM):
                         if (response_model is not None) and (
                             not constants.is_meta(self.model_type.name)
                         ):
-                            llm = llm.with_structured_output(response_model)
+                            llm = llm.with_structured_output(response_model, include_raw=True)
 
                         batch_results = await self._run_batch(
                             prompts_to_run,
@@ -420,19 +538,33 @@ class LLMApi(LLM):
 
                 batch_results_strs.append(None)  # Append None for failed calls
             elif response is not None:
-                # Extract token usage before serializing
-                if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                    usage = response.usage_metadata
-                    batch_input_tokens += usage.get('input_tokens', 0)
-                    batch_output_tokens += usage.get('output_tokens', 0)
-                    # Extract detailed token breakdowns if available
-                    input_details = usage.get('input_token_details') or {}
-                    output_details = usage.get('output_token_details') or {}
-                    batch_cached_tokens += input_details.get('cache_read', 0)
-                    batch_reasoning_tokens += output_details.get('reasoning', 0)
-                serialized = self._serialize_llm_response(
-                    response, response_model=response_model
-                )
+                # When include_raw=True, response is {"raw": AIMessage, "parsed": Model}
+                # Otherwise response is an AIMessage (no structured output)
+                raw_msg = response
+                actual_response = response
+                if isinstance(response, dict) and "raw" in response:
+                    raw_msg = response["raw"]
+                    actual_response = response["parsed"]
+
+                if hasattr(raw_msg, 'usage_metadata') and raw_msg.usage_metadata:
+                    parsed_usage = UsageCallbackHandler.parse_usage_metadata(
+                        raw_msg.usage_metadata
+                    )
+                    if parsed_usage:
+                        batch_input_tokens += parsed_usage.get('input_tokens', 0)
+                        batch_output_tokens += parsed_usage.get('output_tokens', 0)
+                        batch_cached_tokens += parsed_usage.get('cached_tokens', 0)
+                        batch_reasoning_tokens += parsed_usage.get('reasoning_tokens', 0)
+
+                if actual_response is not None:
+                    serialized = self._serialize_llm_response(
+                        actual_response, response_model=response_model
+                    )
+                else:
+                    self.logging.error(
+                        f"Structured output parsing failed: {response.get('parsing_error')}"
+                    )
+                    serialized = None
                 batch_results_strs.append(serialized)
             else:
                 batch_results_strs.append(None)  # Append None if response was None
@@ -444,6 +576,13 @@ class LLMApi(LLM):
                 f"Batch token usage: input={batch_input_tokens} (cached={batch_cached_tokens}), "
                 f"output={batch_output_tokens} (reasoning={batch_reasoning_tokens}), total={batch_total}"
             )
+        self._report_batch_usage(
+            batch_input_tokens,
+            batch_output_tokens,
+            batch_cached_tokens,
+            batch_reasoning_tokens,
+            len(prompts_to_run),
+        )
 
         # Only cache successful responses - filter out None values.
         successful_prompts = []

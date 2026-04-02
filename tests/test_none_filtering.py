@@ -112,9 +112,9 @@ class TestBatchRequestNoneFiltering:
         """Test that batch with mixed results filters out None values."""
         # Setup mock batch results: [success, exception, success, exception]
         mock_responses = [
-            MagicMock(content="Response 1"),  # Success
+            MagicMock(content="Response 1", usage_metadata=None),  # Success
             Exception("Timeout"),  # Failure → None (no serialization call)
-            MagicMock(content="Response 3"),  # Success
+            MagicMock(content="Response 3", usage_metadata=None),  # Success
             Exception("Rate limit"),  # Failure → None (no serialization call)
         ]
 
@@ -196,9 +196,9 @@ class TestBatchRequestNoneFiltering:
         """Test that batch with all successful results caches everything."""
         # Setup mock batch results: all success
         mock_responses = [
-            MagicMock(content="Response 1"),
-            MagicMock(content="Response 2"),
-            MagicMock(content="Response 3"),
+            MagicMock(content="Response 1", usage_metadata=None),
+            MagicMock(content="Response 2", usage_metadata=None),
+            MagicMock(content="Response 3", usage_metadata=None),
         ]
 
         with (

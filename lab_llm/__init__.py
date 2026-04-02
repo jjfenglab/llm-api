@@ -20,6 +20,7 @@ from lab_llm.llm_cache import LLMCache
 from lab_llm.duckdb_handler import DuckDBHandler
 from lab_llm.error_tracker import ErrorTracker
 from lab_llm.error_callback_handler import ErrorCallbackHandler
+from lab_llm.usage_callback_handler import UsageCallbackHandler
 from lab_llm.dataset import TextDataset, ImageDataset
 from lab_llm.constants import (
     LLMModel,
@@ -44,6 +45,7 @@ __all__ = [
     "DuckDBHandler",
     "ErrorTracker",
     "ErrorCallbackHandler",
+    "UsageCallbackHandler",
     # Dataset classes
     "TextDataset",
     "ImageDataset",
