@@ -1,6 +1,6 @@
 import logging
 from typing import Any, Optional, Union
-from langchain.callbacks.base import BaseCallbackHandler
+from langchain_core.callbacks.base import BaseCallbackHandler
 
 from lab_llm.error_tracker import ErrorCategory, ErrorTracker
 

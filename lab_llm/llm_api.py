@@ -7,7 +7,7 @@ import time
 from typing import Dict, List, Optional
 
 import pandas as pd
-from langchain.globals import set_debug
+from langchain_core.globals import set_debug
 from langchain_aws.chat_models.bedrock_converse import ChatBedrockConverse
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.rate_limiters import InMemoryRateLimiter
