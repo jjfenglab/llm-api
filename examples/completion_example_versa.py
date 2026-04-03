@@ -1,5 +1,5 @@
 from lab_llm.new.versa_openai import versa_openai_completion, VersaOpenAIModels, DefaultVersaModelRamp
-from lab_llm.new import make_function_tool
+from lab_llm.new import make_function_tool, CachingCompletion
 import dotenv
 import logging
 import json
@@ -47,7 +47,8 @@ def weather_lookup(city: str, state: str, country: str) -> dict:
         return {}
 
 # loads endpoint and API keys from environment variables by default
-completion = DefaultVersaModelRamp(versa_openai_completion())
+cache = CachingCompletion("./llm_cache.db")
+completion = cache(DefaultVersaModelRamp(versa_openai_completion()))
 messages: list[Message] = [
     Message(role="system", content="You are a helpful assistant. Always check the weather using the weather_lookup tool before answering."),
     Message(role="user", content="What is the weather like in Seattle in January?")
