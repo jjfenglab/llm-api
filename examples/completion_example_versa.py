@@ -1,5 +1,5 @@
 from lab_llm.new.versa_openai import versa_openai_completion, VersaOpenAIModels, DefaultVersaModelRamp
-from lab_llm.new import make_function_tool, CachingCompletion
+from lab_llm.new import make_function_tool, CachingCompletion, ErrorTracker, UsageTracker
 import dotenv
 import logging
 import json
@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 dotenv.load_dotenv()
 
 def weather_lookup(city: str, state: str, country: str) -> dict:
-    print("LOOKING UP WEATHER")
+    print("Running function call")
     if city == 'Seattle':
         return {
             "temperature": {
@@ -46,9 +46,24 @@ def weather_lookup(city: str, state: str, country: str) -> dict:
     else:
         return {}
 
-# loads endpoint and API keys from environment variables by default
+# We define all the functionality we want to add to our completion process by wrapping
+# the completion function in decorators
+error_tracker = ErrorTracker(logging.getLogger(__name__), log_file="errors.txt")
 cache = CachingCompletion("./llm_cache.db")
-completion = cache(DefaultVersaModelRamp(versa_openai_completion()))
+usage_tracker = UsageTracker()
+
+completion = usage_tracker(
+    error_tracker(
+        cache(
+            DefaultVersaModelRamp(
+                # This is the base completion function - works out-of-the-box with litellm.completion
+                # The versa version loads endpoint and API keys from the VERSA_ENDPOINT and VERSA_API_KEY env variables.
+                versa_openai_completion()
+            )
+        )
+    )  
+)
+
 messages: list[Message] = [
     Message(role="system", content="You are a helpful assistant. Always check the weather using the weather_lookup tool before answering."),
     Message(role="user", content="What is the weather like in Seattle in January?")
@@ -86,3 +101,5 @@ while True:
             })
     else:
         break
+
+print("\n\nTotal usage:", usage_tracker.total_usage())

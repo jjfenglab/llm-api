@@ -10,7 +10,7 @@ import json
 import hashlib
 import logging
 from functools import wraps
-from typing import Optional, List
+from typing import Optional, List, Any
 from pathlib import Path
 
 import duckdb
@@ -42,14 +42,18 @@ class CachingCompletion(CompletionFunctionWrapper):
         )
     """
 
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, return_original_usage: bool = False):
         """
         Initialize the caching wrapper.
 
         Args:
             db_path: Path to the DuckDB database file
+            return_original_usage: Whether or not to return original token usage counts 
+                in responses that are loaded from cache (default is to set the token
+                usage to zero, reflecting the actual cost of the query). 
         """
         self.db_path = Path(db_path)
+        self.return_original_usage = return_original_usage
         self._ensure_db_exists()
         self._create_tables()
 
@@ -319,7 +323,12 @@ class CachingCompletion(CompletionFunctionWrapper):
         """
         response_dict = json.loads(cached_json)
 
-        # Create ModelResponse from dict
-        # Note: This assumes ModelResponse can be constructed from a dict
-        # If not, we may need to use a different approach
+        if not self.return_original_usage:
+            # Set the usage statistics to zero
+            def to_zero(d: Any) -> dict:
+                if isinstance(d, dict):
+                    return {k: 0 if isinstance(v, int) else to_zero(v) for k, v in d.items()}
+                return d
+            response_dict["usage"] = to_zero(response_dict["usage"])
+
         return ModelResponse(**response_dict)
