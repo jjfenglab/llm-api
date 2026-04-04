@@ -17,6 +17,7 @@ import duckdb
 from litellm import ModelResponse
 
 from .types import CompletionFunction, CompletionFunctionWrapper
+from .parameter_wrappers import MODEL_SIZES
 
 
 logger = logging.getLogger(__name__)
@@ -34,9 +35,12 @@ class CachingCompletion(CompletionFunctionWrapper):
             temperature=0.7
         )
 
-    Can be composed with other wrappers:
-        completion = CachingCompletion("./cache.db")(
-            ModelRamp(["gpt-4o-mini", "gpt-5"])(
+    Can be composed with other wrappers. Note that this should typically be 
+    added directly around the original completion function, to ensure that 
+    the parameters added by other wrappers are saved.
+
+        completion = ModelRamp(["gpt-4o-mini", "gpt-5"])(
+            CachingCompletion("./cache.db")(
                 versa_openai_completion()
             )
         )
@@ -69,9 +73,9 @@ class CachingCompletion(CompletionFunctionWrapper):
         """
         @wraps(func)
         def wrapped_completion(model: str, messages: List = None, **kwargs) -> ModelResponse:
-            if messages is None:
-                messages = []
-
+            if model is None:
+                raise ValueError(f"model cannot be None for CachingCompletion. Ensure that if you are routing models with a decorator, this happens within the completion function passed to CachingCompletion.")
+            
             # Check if we should cache this request
             if not self._should_cache(**kwargs):
                 return func(model, messages, **kwargs)
@@ -87,13 +91,13 @@ class CachingCompletion(CompletionFunctionWrapper):
             try:
                 cached_response = self._get_cached_response(cache_key)
                 if cached_response is not None:
-                    logger.debug(f"Cache hit for key: {cache_key[:12]}...")
+                    logger.debug(f"Cache hit for model {model}, key: {cache_key[:12]}...")
                     return cached_response
             except Exception as e:
                 logger.warning(f"Failed to get cached response: {e}")
 
             # Cache miss - call the wrapped function
-            logger.debug(f"Cache miss for key: {cache_key[:12]}...")
+            logger.debug(f"Cache miss for model {model}, key: {cache_key[:12]}...")
             response = func(model, messages=messages, **kwargs)
 
             # Cache the response if successful

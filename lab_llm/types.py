@@ -81,3 +81,37 @@ class CompletionFunctionWrapper(Protocol):
     """Protocol for a wrapper that can decorate a completion function."""
     def __call__(self, func: CompletionFunction) -> CompletionFunction:
         ...
+
+class CompletionKwargs(TypedDict):
+    # Optional OpenAI params
+    timeout: Optional[Union[float, int]]
+    temperature: Optional[float]
+    top_p: Optional[float]
+    n: Optional[int]
+    stream: Optional[bool]
+    stream_options: Optional[dict]
+    stop: Any
+    max_completion_tokens: Optional[int]
+    max_tokens: Optional[int]
+    presence_penalty: Optional[float]
+    frequency_penalty: Optional[float]
+    logit_bias: Optional[dict]
+    user: Optional[str]
+    # openai v1.0+ new params
+    response_format: Optional[dict]
+    seed: Optional[int]
+    tools: Optional[List]
+    tool_choice: Optional[str]
+    parallel_tool_calls: Optional[bool]
+    logprobs: Optional[bool]
+    top_logprobs: Optional[int]
+    safety_identifier: Optional[str]
+    deployment_id: Any
+    # soon to be deprecated params by OpenAI
+    functions: Optional[List]
+    function_call: Optional[str]
+    # set api_base, api_version, api_key
+    base_url: Optional[str]
+    api_version: Optional[str]
+    api_key: Optional[str]
+    model_list: Optional[list]

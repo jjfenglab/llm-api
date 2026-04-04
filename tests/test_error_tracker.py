@@ -13,7 +13,7 @@ from unittest.mock import Mock
 import pytest
 from litellm import ModelResponse
 
-from lab_llm.new.error_tracker import ErrorTracker, ErrorCategory
+from lab_llm.error_tracker import ErrorTracker, ErrorCategory
 
 
 class MockCompletion:

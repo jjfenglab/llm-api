@@ -15,7 +15,7 @@ from openai.types.chat import ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from litellm.types.utils import Usage
 
-from lab_llm.new.caching_completion import CachingCompletion
+from lab_llm.caching_completion import CachingCompletion
 
 
 class TestCachingCompletion:

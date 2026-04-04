@@ -1,26 +1,51 @@
 import asyncio
 import json
-from typing import Any, List, Optional, Union, Callable
+from typing import Any, List, Optional, Union, Callable, Unpack
 from collections.abc import Sequence
 import logging
 
 from litellm import ModelResponse, Message
 from pydantic import BaseModel
 
-from .types import CompletionFunction, CompletionFunctionWrapper, FunctionTool, ToolCall
+from .types import CompletionFunction, CompletionFunctionWrapper, FunctionTool, ToolCall, CompletionKwargs
 from .tools import make_function_tool
+from .parameter_wrappers import ModelRamp, ModelDefault
+from .caching_completion import CachingCompletion
+from .error_tracker import ErrorTracker
+from .usage_tracker import UsageTracker
 
 class ToolExecutionError(Exception):
     pass
 
 logger = logging.getLogger(__name__)
 
+def wrap_completion_function(func: CompletionFunction,
+                             cache: Optional[CachingCompletion] = None,
+                             model_ramp: Optional[ModelRamp] = None,
+                             default_model_name: Optional[str] = None,
+                             error_tracker: Optional[ErrorTracker] = None,
+                             usage_tracker: Optional[UsageTracker] = None) -> CompletionFunction:
+    """
+    Sets up a completion function with optional wrappers to extend
+    its functionality.
+    """
+    if cache is not None:
+        func = cache(func)
+    if default_model_name is not None:
+        assert model_ramp is None, "Cannot use both model_ramp and default_model_name"
+        func = ModelDefault(default_model_name)(func)
+    if model_ramp is not None:
+        func = model_ramp(func)
+    if error_tracker is not None:
+        func = error_tracker(func)
+    if usage_tracker is not None:
+        func = usage_tracker(func)
+    return func
+
 
 class LLMApi:
-    def __init__(self, completion_function: CompletionFunction, wrappers: Optional[Sequence[CompletionFunctionWrapper]] = None):
+    def __init__(self, completion_function: CompletionFunction):
         self.completion = completion_function
-        if wrappers:
-            for wrapper in wrappers: self.completion = wrapper(self.completion)
 
     def _normalize_messages(self, messages: Union[str, List[Union[str, dict, Message]]]) -> List[dict]:
         if isinstance(messages, str):
@@ -71,7 +96,7 @@ class LLMApi:
         tools: Optional[List[Union[Callable, FunctionTool]]] = None,
         max_tool_calls: Optional[int] = None,
         model: Optional[str] = None,
-        **kwargs
+        **kwargs: Unpack[CompletionKwargs]
     ) -> Any:
         normalized_messages = self._normalize_messages(messages)
         normalized_tools = self._normalize_tools(tools)
@@ -138,7 +163,7 @@ class LLMApi:
         tools: Optional[List[Union[Callable, FunctionTool]]] = None,
         max_tool_calls: Optional[int] = None,
         model: Optional[str] = None,
-        **kwargs
+        **kwargs: Unpack[CompletionKwargs]
     ) -> Any:
         # Run the synchronous version in an executor to avoid blocking
         loop = asyncio.get_event_loop()
@@ -159,7 +184,7 @@ class LLMApi:
         max_tool_calls: Optional[int] = None,
         max_parallel_jobs: Optional[int] = None,
         model: Optional[str] = None,
-        **kwargs
+        **kwargs: Unpack[CompletionKwargs]
     ) -> List[Any]:
         if max_parallel_jobs is None:
             # Use asyncio.gather for unlimited parallelism

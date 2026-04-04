@@ -66,7 +66,7 @@ class ModelDefault(CompletionFunctionWrapper):
     def __call__(self, func):
         @wraps(func)
         def wrapped_func(model: Optional[str], **kwargs) -> Any:
-            if model is None:
+            if model is None or model in MODEL_SIZES:
                 model = self._default_model
             return func(model, **kwargs)
         

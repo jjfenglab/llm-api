@@ -1,17 +1,26 @@
 """
-Error tracking system for LLM API failures.
+ErrorTracker wrapper for litellm.completion with error handling and logging.
+
+Combines the functionality of the original ErrorTracker and ErrorCallbackHandler
+into a decorator-style wrapper that catches errors, classifies them, and handles
+them by logging to console and/or saving to JSONL file.
 """
 
 import hashlib
 import json
+import logging
 import traceback
 from datetime import datetime
 from enum import Enum
+from functools import wraps
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
-import pandas as pd
+from litellm import ModelResponse
 from openai import PermissionDeniedError
+from litellm.exceptions import PermissionDeniedError as LiteLLMPermissionDenied, APIError as LiteLLMAPIError
+
+from .types import CompletionFunction, CompletionFunctionWrapper
 
 
 class ErrorCategory(Enum):
@@ -23,31 +32,110 @@ class ErrorCategory(Enum):
     UNKNOWN = "unknown"  # Unclassified errors
 
 
-class ErrorTracker:
+class ErrorTracker(CompletionFunctionWrapper):
     """
-    Error tracking where each error is appended as a JSON line to a file
+    A wrapper that adds error handling and logging to completion functions.
 
-    Usage:
-        tracker = ErrorTracker("study_errors.jsonl")
-        tracker.log_error(
-            error=TimeoutError("Request timed out"),
-            prompt_hash="abc123...",
-            context={"model": "gpt-4", "timeout": 60}
+    Provides:
+    - Error classification (transient/permanent/user_interrupt)
+    - Optional JSONL-based error logging for analysis
+    - Structured logging with error categories
+    - User interrupt propagation
+    - Preserves original exception types and behavior
+
+    Example usage:
+        completion = ErrorTracker(
+            logger=logging.getLogger(__name__),
+            log_file="errors.jsonl"
+        )(litellm.completion)
+
+        response = completion(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}]
+        )
+
+    Can be composed with other wrappers:
+        completion = ErrorTracker(logger)(
+            CachingCompletion("./cache.db")(
+                litellm.completion
+            )
         )
     """
 
     # Error classification based on exception hierarchy
-    TRANSIENT_BASES = (TimeoutError, ConnectionError, PermissionDeniedError)
+    TRANSIENT_BASES = (TimeoutError, ConnectionError, PermissionDeniedError, LiteLLMPermissionDenied, LiteLLMAPIError)
     PERMANENT_BASES = (ValueError, TypeError)
 
-    def __init__(self, log_file: str = "llm_errors.jsonl"):
+    def __init__(
+        self,
+        logger: logging.Logger,
+        log_file: Optional[str] = None,
+        propagate_interrupts: bool = True,
+        include_traceback: bool = False,
+    ):
         """
-        Initialize error tracker with JSONL log file.
+        Initialize the error tracking wrapper.
 
         Args:
-            log_file: Path to JSONL file for error logging
+            logger: Python logger for console/file logging
+            log_file: Optional path to JSONL file for error logging
+            propagate_interrupts: If True, re-raise KeyboardInterrupt (default: True)
+            include_traceback: Whether to include full traceback in JSONL logs
         """
-        self.log_file = Path(log_file)
+        self.logger = logger
+        self.log_file = Path(log_file) if log_file else None
+        self.propagate_interrupts = propagate_interrupts
+        self.include_traceback = include_traceback
+
+    def __call__(self, func: CompletionFunction) -> CompletionFunction:
+        """
+        Implements CompletionFunctionWrapper protocol.
+
+        Args:
+            func: The completion function to wrap
+
+        Returns:
+            Wrapped completion function with error handling
+        """
+        @wraps(func)
+        def wrapped_completion(model: str, messages: List = None, **kwargs) -> ModelResponse:
+            try:
+                return func(model, messages=messages, **kwargs)
+            except Exception as error:
+                self._handle_error(error, model, messages, **kwargs)
+                # Re-raise the original error to preserve exception handling behavior
+                raise
+
+        return wrapped_completion
+
+    def _handle_error(self, error: Exception, model: str, messages: List, **kwargs):
+        """
+        Handle an error by classifying and logging it.
+
+        Args:
+            error: The exception that occurred
+            model: Model name used in the request
+            messages: Messages sent to the model
+            **kwargs: Additional context from the completion call
+        """
+        # Classify the error
+        category = self.classify_error(error)
+
+        # Log to JSONL file if enabled
+        if self.log_file:
+            self._log_error_to_file(error, category, model, messages, **kwargs)
+
+        # Enhanced structured logging with category
+        self.logger.error(f"LLM Error [{category.value}]: {type(error).__name__}")
+        self.logger.error(f"Message: {str(error)}")
+        self.logger.error(f"Model: {model}")
+        if kwargs:
+            self.logger.error(f"Additional context: {kwargs}")
+
+        # Propagate user interrupts to stop execution
+        if self.propagate_interrupts and isinstance(error, KeyboardInterrupt):
+            self.logger.warning("User interrupt detected - stopping execution")
+            # Don't re-raise here, let the wrapper function handle it
 
     def classify_error(self, error: Exception) -> ErrorCategory:
         """
@@ -92,160 +180,120 @@ class ErrorTracker:
         # Default to unknown (won't retry by default)
         return ErrorCategory.UNKNOWN
 
-    def log_error(
+    def _log_error_to_file(
         self,
         error: Exception,
-        prompt: Optional[str] = None,
-        prompt_hash: Optional[str] = None,
-        context: Optional[Dict] = None,
-        include_traceback: bool = False,
+        category: ErrorCategory,
+        model: str,
+        messages: List,
+        **kwargs
     ):
         """
         Log an error to the JSONL file.
 
         Args:
             error: The exception that occurred
-            prompt: The full prompt text (will be hashed and truncated)
-            prompt_hash: Pre-computed prompt hash (optional)
-            context: Additional context (model, timeout, etc.)
-            include_traceback: Whether to include full traceback (default: False for size)
+            category: The classified error category
+            model: Model name used in the request
+            messages: Messages sent to the model
+            **kwargs: Additional context from the completion call
         """
-        # Compute prompt hash if not provided
-        if prompt_hash is None and prompt is not None:
-            prompt_hash = hashlib.sha256(prompt.strip().encode("utf-8")).hexdigest()
+        try:
+            # Compute prompt hash from messages
+            prompt_text = self._messages_to_string(messages)
+            prompt_hash = hashlib.sha256(prompt_text.strip().encode("utf-8")).hexdigest()
 
-        # Classify the error
-        category = self.classify_error(error)
+            # Build error record
+            error_record = {
+                "timestamp": datetime.now().isoformat(),
+                "error_type": type(error).__name__,
+                "error_category": category.value,
+                "error_message": str(error),
+                "prompt_hash": prompt_hash,
+                "model": model,
+            }
 
-        # Build error record
-        error_record = {
-            "timestamp": datetime.now().isoformat(),
-            "error_type": type(error).__name__,
-            "error_category": category.value,
-            "error_message": str(error),
-            "prompt_hash": prompt_hash,
-        }
+            # Add prompt preview for debugging (first 200 chars)
+            if prompt_text:
+                error_record["prompt_preview"] = prompt_text[:200]
 
-        # Add prompt preview for debugging (first 200 chars)
-        if prompt is not None:
-            error_record["prompt_preview"] = prompt[:200]
+            # Add relevant context fields (filter out sensitive/large data)
+            context = self._filter_context_for_logging(**kwargs)
+            if context:
+                error_record.update(context)
 
-        # Add context fields
-        if context:
-            error_record.update(context)
+            # Optionally add full traceback
+            if self.include_traceback:
+                error_record["traceback"] = traceback.format_exc()
 
-        # Optionally add full traceback
-        if include_traceback:
-            error_record["traceback"] = traceback.format_exc()
+            # Append to JSONL file (one JSON object per line)
+            with open(self.log_file, "a") as f:
+                f.write(json.dumps(error_record) + "\n")
 
-        # Append to JSONL file (one JSON object per line)
-        with open(self.log_file, "a") as f:
-            f.write(json.dumps(error_record) + "\n")
+        except Exception as log_error:
+            # Don't let logging errors crash the application
+            self.logger.warning(f"Failed to log error to file: {log_error}")
 
-    def load_errors(self) -> pd.DataFrame:
+    def _messages_to_string(self, messages: List) -> str:
         """
-        Load all errors from JSONL file into a pandas DataFrame.
-
-        Returns:
-            DataFrame with all error records
-        """
-        if not self.log_file.exists():
-            return pd.DataFrame()
-
-        # Read JSONL file
-        records = []
-        with open(self.log_file, "r") as f:
-            for line in f:
-                if line.strip():  # Skip empty lines
-                    records.append(json.loads(line))
-
-        return pd.DataFrame(records)
-
-    def get_summary(self) -> pd.DataFrame:
-        """
-        Get summary statistics of errors.
-
-        Returns:
-            DataFrame with error counts by category and type
-        """
-        df = self.load_errors()
-        if df.empty:
-            return pd.DataFrame()
-
-        summary = (
-            df.groupby(["error_category", "error_type"])
-            .agg({"prompt_hash": "count", "timestamp": ["min", "max"]})
-            .reset_index()
-        )
-
-        summary.columns = ["category", "type", "count", "first_seen", "last_seen"]
-        return summary.sort_values("count", ascending=False)
-
-    def get_transient_errors(self) -> pd.DataFrame:
-        """
-        Get all transient errors (timeouts, rate limits, etc.).
-
-        These are errors that should be retried.
-
-        Returns:
-            DataFrame with transient errors only
-        """
-        df = self.load_errors()
-        if df.empty:
-            return df
-
-        return df[df["error_category"] == ErrorCategory.TRANSIENT.value]
-
-    def get_permanent_errors(self) -> pd.DataFrame:
-        """
-        Get all permanent errors (validation, serialization, etc.).
-
-        These are errors that need prompt or code fixes.
-
-        Returns:
-            DataFrame with permanent errors and occurrence counts
-        """
-        df = self.load_errors()
-        if df.empty:
-            return df
-
-        permanent = df[df["error_category"] == ErrorCategory.PERMANENT.value]
-
-        # Group by prompt hash to see which prompts consistently fail
-        if not permanent.empty:
-            grouped = (
-                permanent.groupby(["prompt_hash", "error_type", "error_message"])
-                .agg({"timestamp": "count", "prompt_preview": "first"})
-                .reset_index()
-            )
-            grouped.columns = [
-                "prompt_hash",
-                "error_type",
-                "error_message",
-                "count",
-                "prompt_preview",
-            ]
-            return grouped.sort_values("count", ascending=False)
-
-        return permanent
-
-    def get_errors_by_prompt(self, prompt_hash: str) -> pd.DataFrame:
-        """
-        Get all errors for a specific prompt (for debugging).
+        Convert messages list to a string representation for hashing.
 
         Args:
-            prompt_hash: The SHA256 hash of the prompt
+            messages: List of message objects (dicts or pydantic models)
 
         Returns:
-            DataFrame with all errors for this prompt
+            String representation of messages
         """
-        df = self.load_errors()
-        if df.empty:
-            return df
+        try:
+            # Convert messages to a consistent format
+            formatted_messages = []
+            for msg in messages:
+                if isinstance(msg, dict):
+                    formatted_messages.append(msg)
+                else:  # Pydantic Message object
+                    if hasattr(msg, 'model_dump'):
+                        formatted_messages.append(msg.model_dump())
+                    else:
+                        # Fallback - try to convert to dict
+                        formatted_messages.append(dict(msg))
 
-        return df[df["prompt_hash"] == prompt_hash].sort_values("timestamp")
+            # Convert to JSON string for consistent hashing
+            return json.dumps(formatted_messages, sort_keys=True, separators=(',', ':'))
+        except Exception:
+            # Fallback to string representation
+            return str(messages)
 
-    def clear(self):
-        """Clear the error log (use with caution!)"""
-        if self.log_file.exists():
-            self.log_file.unlink()
+    def _filter_context_for_logging(self, **kwargs) -> Dict:
+        """
+        Filter kwargs to include only relevant context for logging.
+
+        Removes sensitive or large data that shouldn't be logged.
+
+        Args:
+            **kwargs: All keyword arguments from completion call
+
+        Returns:
+            Filtered context dict
+        """
+        context = {}
+
+        # Include relevant parameters for debugging
+        relevant_params = {
+            'temperature', 'top_p', 'max_tokens', 'max_completion_tokens',
+            'timeout', 'n', 'stream', 'response_format', 'tools', 'tool_choice'
+        }
+
+        for key, value in kwargs.items():
+            if key in relevant_params:
+                # Handle response_format conversion if it's a pydantic model
+                if key == 'response_format' and value is not None:
+                    if isinstance(value, dict):
+                        context[key] = value
+                    elif hasattr(value, 'model_json_schema'):
+                        context[key] = value.model_json_schema()
+                    else:
+                        context[key] = str(value)
+                else:
+                    context[key] = value
+
+        return context

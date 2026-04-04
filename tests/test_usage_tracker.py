@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import Mock
 from litellm import ModelResponse
 
-from lab_llm.new.usage_tracker import UsageTracker
+from lab_llm.usage_tracker import UsageTracker
 
 
 class MockUsage:

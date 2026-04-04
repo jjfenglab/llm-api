@@ -1,5 +1,5 @@
 """
-Example usage of the new LLMApi class from lab_llm.new.
+Example usage of the LLMApi class.
 
 This demonstrates:
 1. Simple string message handling
@@ -10,11 +10,10 @@ This demonstrates:
 
 import asyncio
 from pydantic import BaseModel, Field
-import logging
 
-from lab_llm.new import LLMApi, CachingCompletion, ErrorTracker, UsageTracker, ModelDefault
-from lab_llm.new.versa_openai import versa_openai_completion, DefaultVersaModelRamp
-
+from lab_llm import LLMApi, wrap_completion_function, CachingCompletion, ErrorTracker, UsageTracker, ModelRamp
+from lab_llm.constants import Claude
+import litellm
 
 def weather_lookup(city: str, state: str = "", country: str = "US") -> dict:
     """Look up weather information for a city."""
@@ -65,13 +64,13 @@ def main():
     cache = CachingCompletion("./llmapi_cache.db")
 
     # Create the LLMApi instance
-    api = LLMApi(versa_openai_completion(), wrappers=[
-        DefaultVersaModelRamp,
-        cache,
-        ModelDefault("xs"),
-        error_tracker,
-        usage_tracker
-    ])
+    api = LLMApi(wrap_completion_function(
+        litellm.completion,
+        cache=cache,
+        model_ramp=ModelRamp([Claude.HAIKU_4_5, Claude.SONNET_4_5, Claude.OPUS_4_5], default_size="sm"),
+        error_tracker=error_tracker,
+        usage_tracker=usage_tracker
+    ))
 
     print("=== Example 1: Simple string message ===")
     result = api.run(

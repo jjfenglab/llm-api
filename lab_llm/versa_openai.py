@@ -1,30 +1,18 @@
 import os
 from typing import Callable, Any, Optional
+from .constants import VersaOpenAI, VERSA_API_VERSION
 from .types import CompletionFunction
 from .parameter_wrappers import ModelRamp
 import logging
 from functools import wraps
 
-class VersaOpenAIModels:
-    GPT4_O_2024_08 = "gpt-4o-2024-08-06"
-    GPT4_O_MINI_2024_07 = "gpt-4o-mini-2024-07-18"
-    GPT4_O_2024_11 = "gpt-4o-2024-11-20"
-    GPT4_O_MINI_2024_11 = "gpt-4o-mini-2024-11-20"
-    GPT5_2025_08 = "gpt-5-2025-08-07"
-    GPT5_MINI_2025_08 = "gpt-5-mini-2025-08-07"
-    GPT5_NANO_2025_08 = "gpt-5-nano-2025-08-07"
-    O_1_2024_12 = "o1-2024-12-17"
-    O_4_MINI_2025_04 = "o4-mini-2025-04-16"
-
-DefaultVersaModelRamp = ModelRamp([
-    VersaOpenAIModels.GPT4_O_2024_11,
-    VersaOpenAIModels.GPT5_NANO_2025_08,
-    VersaOpenAIModels.GPT5_MINI_2025_08,
-    VersaOpenAIModels.GPT5_2025_08,
-    VersaOpenAIModels.O_1_2024_12
+VersaOpenAIModelRamp = ModelRamp([
+    VersaOpenAI.GPT4_O_2024_11,
+    VersaOpenAI.GPT5_NANO_2025_08,
+    VersaOpenAI.GPT5_MINI_2025_08,
+    VersaOpenAI.GPT5_2025_08,
+    VersaOpenAI.O_1_2024_12
 ])
-
-VERSA_API_VERSION = "2024-12-01-preview"
 
 def versa_openai_completion(completion_func: Optional[CompletionFunction] = None, api_key: Optional[str] = None, endpoint: Optional[str] = None, api_version: Optional[str] = None) -> CompletionFunction:
     """
@@ -36,7 +24,7 @@ def versa_openai_completion(completion_func: Optional[CompletionFunction] = None
     - Uses VERSA_API_VERSION (defaults to "2024-10-21") -> api_version
 
     Args:
-        completion_func: Function to wrap
+        completion_func: Function to wrap. If none is passed, uses litellm.completion.
 
     Returns:
         Wrapped function that passes in Versa Azure OpenAI credentials
@@ -66,5 +54,5 @@ def versa_openai_completion(completion_func: Optional[CompletionFunction] = None
 
     @wraps(completion_func)
     def wrapper(model: str, **kwargs) -> Any:
-        return completion_func("azure/" + model, **{**kwargs, **azure_kwargs})
+        return completion_func(model, **{**kwargs, **azure_kwargs})
     return wrapper

@@ -1,10 +1,12 @@
-from lab_llm.new.versa_openai import versa_openai_completion, VersaOpenAIModels, DefaultVersaModelRamp
-from lab_llm.new import make_function_tool, CachingCompletion, ErrorTracker, UsageTracker
+from lab_llm.versa_openai import versa_openai_completion, VersaOpenAIModelRamp
+from lab_llm.versa_claude import versa_claude_completion, VersaClaudeModelRamp
+from lab_llm import wrap_completion_function, make_function_tool, CachingCompletion, ErrorTracker, UsageTracker, ModelDefault, VersaClaude, VersaOpenAI, Claude
 import dotenv
 import logging
 import json
 from pydantic import BaseModel, Field
-from litellm import Message, ModelResponse
+from litellm import Message
+import litellm
 
 logging.basicConfig(level=logging.INFO)
 
@@ -46,22 +48,21 @@ def weather_lookup(city: str, state: str, country: str) -> dict:
     else:
         return {}
 
-# We define all the functionality we want to add to our completion process by wrapping
-# the completion function in decorators
-error_tracker = ErrorTracker(logging.getLogger(__name__), log_file="errors.txt")
-cache = CachingCompletion("./llm_cache.db")
 usage_tracker = UsageTracker()
 
-completion = usage_tracker(
-    error_tracker(
-        cache(
-            DefaultVersaModelRamp(
-                # This is the base completion function - works out-of-the-box with litellm.completion
-                # The versa version loads endpoint and API keys from the VERSA_ENDPOINT and VERSA_API_KEY env variables.
-                versa_openai_completion()
-            )
-        )
-    )  
+completion = wrap_completion_function(
+    # This is the base completion function - works out-of-the-box with litellm.completion
+    # The versa version loads endpoint and API keys from the VERSA_ENDPOINT and VERSA_API_KEY env variables.
+    versa_claude_completion(),
+    # versa_openai_completion(), # Versa OpenAI version
+    # litellm.completion, # General public API version
+    cache=CachingCompletion("./llm_cache.db"),
+
+    # Optional parameters
+    model_ramp=VersaClaudeModelRamp, # allows selecting models by size
+    # default_model_name=VersaClaude.CLAUDE_HAIKU_4_5, # simple default if only one model size is needed
+    error_tracker=ErrorTracker(logging.getLogger(__name__), log_file="errors.txt"),
+    usage_tracker=usage_tracker
 )
 
 messages: list[Message] = [
@@ -75,7 +76,7 @@ class ResponseModel(BaseModel):
 
 while True:
     response = completion(
-        "xs",
+        "xs", # request a model size from the model ramp
         messages=messages,
         tools=[
             make_function_tool(weather_lookup)
