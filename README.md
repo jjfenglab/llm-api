@@ -231,22 +231,16 @@ Install test dependencies:
 pip install -e ".[dev]"
 ```
 
+Run unit and integration tests (requires API credentials):
+
+```bash
+pytest tests/
+```
+
 Run unit tests only:
 
 ```bash
-pytest tests/ -v -m "not integration"
-```
-
-Run all tests including integration tests (requires API credentials in `.env`):
-
-```bash
-pytest tests/ -v
-```
-
-Run only integration tests (requires API credentials):
-
-```bash
-pytest tests/ -v -m integration
+pytest tests/ --ignore=tests/test_integration.py
 ```
 
 **Note:** Integration tests require environment variables for API credentials. Copy `.env.example` to `.env` and fill in your credentials. Tests will be automatically skipped if the required environment variables are not present.

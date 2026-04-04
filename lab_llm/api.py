@@ -3,6 +3,7 @@ import json
 from typing import Any, List, Optional, Union, Callable, Unpack
 from collections.abc import Sequence
 import logging
+from functools import partial
 
 from litellm import ModelResponse, Message
 from pydantic import BaseModel
@@ -169,12 +170,13 @@ class LLMApi:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             None,
-            self.run,
-            messages,
-            tools,
-            max_tool_calls,
-            model,
-            **{k: v for k, v in kwargs.items()}
+            partial(
+                self.run, 
+                messages,
+                max_tool_calls=max_tool_calls,
+                model=model,
+                **kwargs
+            )
         )
 
     async def run_batch(

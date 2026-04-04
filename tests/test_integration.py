@@ -78,7 +78,6 @@ class TestIntegrationLLMAPIs:
         assert total_usage["output_tokens"] >= last_usage["output_tokens"]
         assert total_usage["total_tokens"] >= last_usage["total_tokens"]
 
-    @pytest.mark.integration
     def test_direct_openai_integration(self):
         """Test direct OpenAI API integration via litellm."""
         required_vars = ["OPENAI_API_KEY"]
@@ -110,7 +109,6 @@ class TestIntegrationLLMAPIs:
 
         print(f"OpenAI API test completed successfully. Usage: {usage_tracker.total_usage()}")
 
-    @pytest.mark.integration
     def test_direct_claude_integration(self):
         """Test direct Claude API integration via litellm."""
         required_vars = ["ANTHROPIC_API_KEY"]
@@ -142,7 +140,6 @@ class TestIntegrationLLMAPIs:
 
         print(f"Claude API test completed successfully. Usage: {usage_tracker.total_usage()}")
 
-    @pytest.mark.integration
     def test_versa_openai_integration(self):
         """Test Versa OpenAI (Azure OpenAI) integration."""
         required_vars = ["VERSA_API_KEY", "VERSA_ENDPOINT"]
@@ -177,7 +174,6 @@ class TestIntegrationLLMAPIs:
 
         print(f"Versa OpenAI test completed successfully. Usage: {usage_tracker.total_usage()}")
 
-    @pytest.mark.integration
     def test_versa_claude_integration(self):
         """Test Versa Claude (AWS Bedrock) integration."""
         required_vars = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "VERSA_ENDPOINT"]
@@ -212,7 +208,6 @@ class TestIntegrationLLMAPIs:
 
         print(f"Versa Claude test completed successfully. Usage: {usage_tracker.total_usage()}")
 
-    @pytest.mark.integration
     def test_tool_usage_with_direct_openai(self):
         """Test tool/function calling capabilities with direct OpenAI."""
         required_vars = ["OPENAI_API_KEY"]
@@ -252,7 +247,6 @@ class TestIntegrationLLMAPIs:
 
         print(f"OpenAI tool usage test completed successfully. Usage: {usage_tracker.total_usage()}")
 
-    @pytest.mark.integration
     def test_batch_processing_with_claude(self):
         """Test batch processing capabilities with Claude."""
         required_vars = ["ANTHROPIC_API_KEY"]
@@ -301,11 +295,10 @@ class TestIntegrationLLMAPIs:
 
         # Usage should reflect multiple calls
         total_usage = usage_tracker.total_usage()
-        assert total_usage["input_tokens"] > 50  # Should be more than single call
+        assert total_usage["input_tokens"] > usage_tracker.last_usage()["input_tokens"]  # Should be more than single call
 
         print(f"Claude batch processing test completed successfully. Usage: {total_usage}")
 
-    @pytest.mark.integration
     def test_error_handling_with_invalid_model(self):
         """Test error handling when using invalid model names."""
         required_vars = ["OPENAI_API_KEY"]
@@ -328,7 +321,6 @@ class TestIntegrationLLMAPIs:
                 max_tokens=50
             )
 
-    @pytest.mark.integration
     def test_environment_variable_loading_patterns(self):
         """Test that environment variables are properly loaded for different providers."""
 
@@ -364,7 +356,6 @@ class TestIntegrationLLMAPIs:
         else:
             print("✗ Versa Claude credentials not found")
 
-    @pytest.mark.integration
     def test_wrapper_composition_in_integration(self):
         """Test that wrapper composition works correctly in integration scenarios."""
         required_vars = ["OPENAI_API_KEY"]

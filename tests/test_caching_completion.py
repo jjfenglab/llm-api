@@ -112,7 +112,7 @@ class TestCachingCompletion:
 
         # Test response_format conversion
         class MockResponseFormat:
-            def dict(self):
+            def model_json_schema(self):
                 return {"type": "json_object"}
 
         kwargs_with_response_format = {
@@ -258,9 +258,9 @@ class TestCachingCompletion:
 
         assert key1 == key2
 
-    def test_serialization_roundtrip(self, caching_completion, mock_completion_func):
+    def test_serialization_roundtrip(self, temp_db_path, mock_completion_func):
         """Test that response serialization and deserialization preserves data."""
-        cache = caching_completion
+        cache = CachingCompletion(temp_db_path / "test.db", return_original_usage=True)
 
         # Create a more complex response
         original_response = ModelResponse(
