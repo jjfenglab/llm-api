@@ -9,7 +9,7 @@ from litellm import ModelResponse, Message
 from pydantic import BaseModel
 
 from .types import CompletionFunction, CompletionFunctionWrapper, FunctionTool, ToolCall, CompletionKwargs
-from .tools import make_function_tool
+from .utils import make_function_tool, normalize_messages, normalize_tools
 from .parameter_wrappers import ModelRamp, ModelDefault
 from .caching_completion import CachingCompletion
 from .error_tracker import ErrorTracker
@@ -48,34 +48,6 @@ class LLMApi:
     def __init__(self, completion_function: CompletionFunction):
         self.completion = completion_function
 
-    def _normalize_messages(self, messages: Union[str, List[Union[str, dict, Message]]]) -> List[dict]:
-        if isinstance(messages, str):
-            return [{"role": "user", "content": messages}]
-
-        result = []
-        for msg in messages:
-            if isinstance(msg, str):
-                result.append({"role": "user", "content": msg})
-            elif hasattr(msg, 'model_dump'):  # Pydantic Message
-                result.append(msg.model_dump())
-            elif isinstance(msg, dict):
-                result.append(msg)
-            else:
-                result.append(dict(msg))
-        return result
-
-    def _normalize_tools(self, tools: Optional[List[Union[Callable, FunctionTool]]]) -> Optional[List[FunctionTool]]:
-        if not tools:
-            return None
-
-        result = []
-        for tool in tools:
-            if callable(tool) and not isinstance(tool, dict):
-                result.append(make_function_tool(tool))
-            else:
-                result.append(tool)
-        return result
-
     def _execute_tool_call(self, tool_call: ToolCall, tools: List[Union[Callable, FunctionTool]]) -> str:
         func_name = tool_call["function"]["name"]
 
@@ -99,8 +71,8 @@ class LLMApi:
         model: Optional[str] = None,
         **kwargs: Unpack[CompletionKwargs]
     ) -> Any:
-        normalized_messages = self._normalize_messages(messages)
-        normalized_tools = self._normalize_tools(tools)
+        normalized_messages = normalize_messages(messages)
+        normalized_tools = normalize_tools(tools)
 
         tool_call_count = 0
 

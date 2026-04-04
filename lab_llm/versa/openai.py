@@ -1,8 +1,8 @@
 import os
 from typing import Callable, Any, Optional
-from .constants import VersaOpenAI, VERSA_API_VERSION
-from .types import CompletionFunction
-from .parameter_wrappers import ModelRamp
+from ..constants import VersaOpenAI, VERSA_API_VERSION
+from ..types import CompletionFunction
+from ..parameter_wrappers import ModelRamp
 import logging
 from functools import wraps
 

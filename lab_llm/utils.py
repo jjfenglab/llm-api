@@ -4,8 +4,9 @@ Tools for creating function tools from Python functions using inspection.
 """
 
 import inspect
-from typing import Any, Callable, get_type_hints, get_origin, get_args, Union, Annotated
+from typing import Any, Callable, get_type_hints, get_origin, get_args, Union, Annotated, Optional, List, Union
 from .types import FunctionDefinition, FunctionTool
+from litellm import Message
 
 def make_function_tool(func: Callable) -> FunctionTool:
     """
@@ -146,3 +147,32 @@ def _type_to_json_schema(type_hint: Any, annotation: Any) -> dict:
             schema = {"type": "array", "items": {"type": "string"}}
 
     return schema
+
+def normalize_messages(messages: Union[str, List[Union[str, dict, Message]]]) -> List[dict]:
+    if isinstance(messages, str):
+        return [{"role": "user", "content": messages}]
+
+    result = []
+    for msg in messages:
+        if isinstance(msg, str):
+            result.append({"role": "user", "content": msg})
+        elif hasattr(msg, 'model_dump'):  # Pydantic Message
+            result.append(msg.model_dump())
+        elif isinstance(msg, dict):
+            result.append(msg)
+        else:
+            result.append(dict(msg))
+    return result
+
+def normalize_tools(tools: Optional[List[Union[Callable, FunctionTool]]]) -> Optional[List[FunctionTool]]:
+    if not tools:
+        return None
+
+    result = []
+    for tool in tools:
+        if callable(tool) and not isinstance(tool, dict):
+            result.append(make_function_tool(tool))
+        else:
+            result.append(tool)
+    return result
+

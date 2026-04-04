@@ -1,5 +1,4 @@
-from lab_llm.versa_openai import versa_openai_completion, VersaOpenAIModelRamp
-from lab_llm.versa_claude import versa_claude_completion, VersaClaudeModelRamp
+from lab_llm.versa import versa_openai_completion, VersaOpenAIModelRamp, versa_claude_completion, VersaClaudeModelRamp
 from lab_llm import wrap_completion_function, make_function_tool, CachingCompletion, ErrorTracker, UsageTracker, ModelDefault, VersaClaude, VersaOpenAI, Claude
 import dotenv
 import logging
