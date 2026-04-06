@@ -1,7 +1,7 @@
 import os
-from typing import Callable, Any, Optional, Literal
+from typing import Callable, Any, Optional, Literal, Unpack
 from collections.abc import Sequence
-from .types import CompletionFunction, CompletionFunctionWrapper
+from .types import CompletionFunction, CompletionFunctionWrapper, CompletionKwargs
 import logging
 from functools import wraps
 
@@ -56,18 +56,19 @@ class ModelRamp(CompletionFunctionWrapper):
         
         return wrapped_func
     
-class ModelDefault(CompletionFunctionWrapper):
+class DefaultParameters(CompletionFunctionWrapper):
     """
-    Injects the given default model (or model request) if the model provided is None.
+    Injects the given default parameters into every request.
     """
-    def __init__(self, default_model: str):
-        self._default_model = default_model
+    def __init__(self, model: Optional[str] = None, **kwargs: Unpack[CompletionKwargs]):
+        self.default_model = model
+        self.default_parameters = kwargs
 
     def __call__(self, func):
         @wraps(func)
         def wrapped_func(model: Optional[str], **kwargs) -> Any:
-            if model is None or model in MODEL_SIZES:
-                model = self._default_model
-            return func(model, **kwargs)
+            if self.default_model is not None and (model is None or model in MODEL_SIZES):
+                model = self.default_model
+            return func(model, **{**self.default_parameters, **kwargs})
         
         return wrapped_func

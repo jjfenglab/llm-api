@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from .types import CompletionFunction, CompletionFunctionWrapper, FunctionToolDict, ToolCall, CompletionKwargs, Tool
 from .utils import normalize_messages, normalize_tools
-from .parameter_wrappers import ModelRamp, ModelDefault
+from .parameter_wrappers import ModelRamp, DefaultParameters
 from .caching_completion import CachingCompletion
 from .error_tracker import ErrorTracker
 from .usage_tracker import UsageTracker
@@ -23,18 +23,19 @@ logger = logging.getLogger(__name__)
 def wrap_completion_function(func: CompletionFunction,
                              cache: Optional[CachingCompletion] = None,
                              model_ramp: Optional[ModelRamp] = None,
-                             default_model_name: Optional[str] = None,
                              error_tracker: Optional[ErrorTracker] = None,
-                             usage_tracker: Optional[UsageTracker] = None) -> CompletionFunction:
+                             usage_tracker: Optional[UsageTracker] = None,
+                             model: Optional[str] = None,
+                             **defaults: Unpack[CompletionKwargs]) -> CompletionFunction:
     """
     Sets up a completion function with optional wrappers to extend
     its functionality.
     """
     if cache is not None:
         func = cache(func)
-    if default_model_name is not None:
-        assert model_ramp is None, "Cannot use both model_ramp and default_model_name"
-        func = ModelDefault(default_model_name)(func)
+    assert (model_ramp is None or model is None), "Cannot use both model_ramp and default model"
+    if model is not None or defaults:
+        func = DefaultParameters(model=model, **defaults)(func)
     if model_ramp is not None:
         func = model_ramp(func)
     if error_tracker is not None:

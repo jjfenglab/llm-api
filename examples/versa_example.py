@@ -1,5 +1,5 @@
 from lab_llm.versa import versa_openai_completion, VersaOpenAIModelRamp, versa_claude_completion, VersaClaudeModelRamp
-from lab_llm import wrap_completion_function, make_function_tool, CachingCompletion, ErrorTracker, UsageTracker, ModelDefault, VersaClaude, VersaOpenAI, Claude
+from lab_llm import LLMApi, wrap_completion_function, CachingCompletion, ErrorTracker, UsageTracker
 import dotenv
 import logging
 import json
@@ -49,20 +49,21 @@ def weather_lookup(city: str, state: str, country: str) -> dict:
 
 usage_tracker = UsageTracker()
 
-completion = wrap_completion_function(
+api = LLMApi(wrap_completion_function(
     # This is the base completion function - works out-of-the-box with litellm.completion
     # The versa version loads endpoint and API keys from the VERSA_ENDPOINT and VERSA_API_KEY env variables.
-    versa_claude_completion(),
+    versa_openai_completion(),
     # versa_openai_completion(), # Versa OpenAI version
     # litellm.completion, # General public API version
     cache=CachingCompletion("./llm_cache.db"),
 
     # Optional parameters
-    model_ramp=VersaClaudeModelRamp, # allows selecting models by size
-    # default_model_name=VersaClaude.CLAUDE_HAIKU_4_5, # simple default if only one model size is needed
+    model_ramp=VersaOpenAIModelRamp, # allows selecting models by size
+    # model=VersaClaude.CLAUDE_HAIKU_4_5, # simple default if only one model size is needed
     error_tracker=ErrorTracker(logging.getLogger(__name__), log_file="errors.txt"),
-    usage_tracker=usage_tracker
-)
+    usage_tracker=usage_tracker,
+    seed=42
+))
 
 messages: list[Message] = [
     Message(role="system", content="You are a helpful assistant. Always check the weather using the weather_lookup tool before answering."),
@@ -73,33 +74,17 @@ class ResponseModel(BaseModel):
     weather_report: str = Field("The weather in the requested city")
     suggested_clothing: str = Field("What the user should wear when visiting at this time")
 
-while True:
-    response = completion(
-        "xs", # request a model size from the model ramp
-        messages=messages,
-        tools=[
-            make_function_tool(weather_lookup)
-        ],
-        response_format=ResponseModel,
-        reasoning_effort='low',
-        max_tokens=200,
-        drop_params=True
-    )
-    print(response, response.usage)
-    message = response.choices[0].message
-    messages.append(message)
-    if tool_calls := message.tool_calls:
-        for tool_call in tool_calls:
-            assert tool_call.function.name == "weather_lookup"
-            args = json.loads(tool_call.function.arguments)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call["id"],
-                "content": str(weather_lookup(args["city"],
-                                              args["state"],
-                                              args["country"]))
-            })
-    else:
-        break
+# Run LLM with tool calls
+message = api.run(
+    messages,
+    model="xs", # request a model size from the model ramp
+    tools=[weather_lookup],
+    response_format=ResponseModel,
+    reasoning_effort='low',
+    max_tokens=200,
+    drop_params=True
+)
+
+print(message)
 
 print("\n\nTotal usage:", usage_tracker.total_usage())

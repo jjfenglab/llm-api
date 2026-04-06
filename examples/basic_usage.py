@@ -14,11 +14,12 @@ dotenv.load_dotenv()
 # which we wrap with a DuckDB-based cache to store previous outputs
 api = LLMApi(wrap_completion_function(
     litellm.completion,
-    cache=CachingCompletion("./llmapi_cache.db")
+    cache=CachingCompletion("./llmapi_cache.db"),
+    model=Claude.HAIKU_4_5
 ))
 
 # Example 1: Single message
-result = api.run("What is the capital of France?", model=Claude.HAIKU_4_5)
+result = api.run("What is the capital of France?")
 print(f"Result: {result}\n")
 # Result: The capital of France is Paris.
 
@@ -26,7 +27,7 @@ print(f"Result: {result}\n")
 result = api.run([
   {"role": "system", "content": "Always speak French to the user."},
   {"role": "user", "content": "What is the capital of France?"},
-], model=Claude.HAIKU_4_5)
+])
 print(f"Result: {result}\n")
 # Result: La capitale de la France est Paris.
 
@@ -38,7 +39,6 @@ class ResponseStyle(BaseModel):
     verbs: list[str] = Field(description="All verbs in the input sentence")
 
 result: ResponseStyle = api.run("The quick brown fox jumped over the lazy dog", 
-                                model=Claude.HAIKU_4_5, 
                                 response_format=ResponseStyle)
 print(f"Result: nouns = {result.nouns}, verbs = {result.verbs}\n")
 # Result: nouns = ['fox', 'dog'], verbs = ['jumped']

@@ -16,10 +16,10 @@ class FunctionToolWrapper(Tool):
     """
     def __init__(self, func: Callable):
         # Get function name
-        self.name = func.__name__
+        self._name = func.__name__
 
         # Get description from docstring
-        description = inspect.getdoc(func) or f"Function {self.name}"
+        description = inspect.getdoc(func) or f"Function {self._name}"
 
         # Get function signature and type hints
         sig = inspect.signature(func)
@@ -69,7 +69,7 @@ class FunctionToolWrapper(Tool):
 
         # Create the function definition
         function_def: FunctionDefinition = {
-            "name": self.name,
+            "name": self._name,
             "description": description,
             "parameters": parameters,
             "strict": False
@@ -84,6 +84,10 @@ class FunctionToolWrapper(Tool):
 
     def __call__(self, **kwargs):
         return self._func(**kwargs)
+    
+    @property
+    def name(self):
+        return self._name
     
     def to_json_schema(self):
         return self._schema

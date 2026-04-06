@@ -78,14 +78,14 @@ class CachingCompletion(CompletionFunctionWrapper):
             
             # Check if we should cache this request
             if not self._should_cache(**kwargs):
-                return func(model, messages, **kwargs)
+                return func(model, messages=messages, **kwargs)
 
             # Compute cache key
             try:
                 cache_key = self._compute_cache_key(model, messages, kwargs)
             except Exception as e:
                 logger.warning(f"Failed to compute cache key: {e}")
-                return func(model, messages, **kwargs)
+                return func(model, messages=messages, **kwargs)
 
             # Try to get from cache
             try:

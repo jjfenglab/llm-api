@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from lab_llm import LLMApi, wrap_completion_function, CachingCompletion, ErrorTracker, UsageTracker, ModelRamp
 from lab_llm.constants import Claude
 import litellm
+import logging
 
 def weather_lookup(city: str, state: str = "", country: str = "US") -> dict:
     """Look up weather information for a city."""

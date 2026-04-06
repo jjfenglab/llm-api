@@ -1,4 +1,4 @@
-from .parameter_wrappers import ModelRamp, ModelDefault
+from .parameter_wrappers import ModelRamp, DefaultParameters
 from .caching_completion import CachingCompletion
 from .error_tracker import ErrorTracker
 from .usage_tracker import UsageTracker
