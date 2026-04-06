@@ -1,15 +1,15 @@
 import asyncio
 import json
 from typing import Any, List, Optional, Union, Callable, Unpack
-from collections.abc import Sequence
+from collections.abc import Sequence, Mapping
 import logging
 from functools import partial
 
 from litellm import ModelResponse, Message
 from pydantic import BaseModel
 
-from .types import CompletionFunction, CompletionFunctionWrapper, FunctionTool, ToolCall, CompletionKwargs
-from .utils import make_function_tool, normalize_messages, normalize_tools
+from .types import CompletionFunction, CompletionFunctionWrapper, FunctionToolDict, ToolCall, CompletionKwargs, Tool
+from .utils import normalize_messages, normalize_tools
 from .parameter_wrappers import ModelRamp, ModelDefault
 from .caching_completion import CachingCompletion
 from .error_tracker import ErrorTracker
@@ -48,25 +48,19 @@ class LLMApi:
     def __init__(self, completion_function: CompletionFunction):
         self.completion = completion_function
 
-    def _execute_tool_call(self, tool_call: ToolCall, tools: List[Union[Callable, FunctionTool]]) -> str:
+    def _execute_tool_call(self, tool_call: ToolCall, tools: Mapping[str, Tool]) -> str:
         func_name = tool_call["function"]["name"]
 
-        # Find the matching tool
-        for tool in tools:
-            if callable(tool) and not isinstance(tool, dict):
-                if tool.__name__ == func_name:
-                    args = json.loads(tool_call["function"]["arguments"])
-                    return str(tool(**args))
-            elif isinstance(tool, dict) and tool.get("function", {}).get("name") == func_name:
-                # For FunctionTool dicts, we can't execute them directly
-                raise ToolExecutionError(f"Cannot execute FunctionTool dict for {func_name}. Only callable functions can be executed.")
-
-        raise ToolExecutionError(f"Tool {func_name} not found in provided tools")
+        if func_name not in tools:
+            raise ToolExecutionError(f"Tool {func_name} not found in provided tools")
+        
+        args = json.loads(tool_call["function"]["arguments"])
+        return str(tools[func_name](**args))
 
     def run(
         self,
         messages: Union[str, List[Union[str, dict, Message]]],
-        tools: Optional[List[Union[Callable, FunctionTool]]] = None,
+        tools: Optional[List[Union[Callable, Tool, FunctionToolDict]]] = None,
         max_tool_calls: Optional[int] = None,
         model: Optional[str] = None,
         **kwargs: Unpack[CompletionKwargs]
@@ -80,7 +74,7 @@ class LLMApi:
             response = self.completion(
                 model,
                 messages=normalized_messages,
-                tools=normalized_tools,
+                tools=[tool.to_json_schema() for tool in normalized_tools.values()],
                 **kwargs
             )
 
@@ -114,7 +108,7 @@ class LLMApi:
             for tool_call in tool_calls:
                 logger.debug("Executing tool: %s", tool_call)
                 try:
-                    result = self._execute_tool_call(tool_call, tools or [])
+                    result = self._execute_tool_call(tool_call, normalized_tools)
                     normalized_messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call["id"],
@@ -133,7 +127,7 @@ class LLMApi:
     async def _run_single_async(
         self,
         messages: Union[str, List[Union[str, dict, Message]]],
-        tools: Optional[List[Union[Callable, FunctionTool]]] = None,
+        tools: Optional[List[Union[Callable, FunctionToolDict]]] = None,
         max_tool_calls: Optional[int] = None,
         model: Optional[str] = None,
         **kwargs: Unpack[CompletionKwargs]
@@ -145,6 +139,7 @@ class LLMApi:
             partial(
                 self.run, 
                 messages,
+                tools=tools,
                 max_tool_calls=max_tool_calls,
                 model=model,
                 **kwargs
@@ -154,7 +149,7 @@ class LLMApi:
     async def run_batch(
         self,
         messages_list: List[Union[str, List[Union[str, dict, Message]]]],
-        tools: Optional[List[Union[Callable, FunctionTool]]] = None,
+        tools: Optional[List[Union[Callable, FunctionToolDict]]] = None,
         max_tool_calls: Optional[int] = None,
         max_parallel_jobs: Optional[int] = None,
         model: Optional[str] = None,

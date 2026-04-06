@@ -5,86 +5,88 @@ Tools for creating function tools from Python functions using inspection.
 
 import inspect
 from typing import Any, Callable, get_type_hints, get_origin, get_args, Union, Annotated, Optional, List, Union
-from .types import FunctionDefinition, FunctionTool
+from collections.abc import Mapping
+from .types import FunctionDefinition, FunctionToolDict, MessageDict, Tool
 from litellm import Message
 
-def make_function_tool(func: Callable) -> FunctionTool:
+class FunctionToolWrapper(Tool):
     """
-    Create a FunctionTool from a Python function using inspection.
-
-    Args:
-        func: The Python function to convert to a FunctionTool
-
-    Returns:
-        FunctionTool dictionary with name, description, and parameter schema
+    A helper type that wraps Python functions and produces JSON schemas
+    for passing them into LLM calls, while also remaining callable.
     """
-    # Get function name
-    name = func.__name__
+    def __init__(self, func: Callable):
+        # Get function name
+        self.name = func.__name__
 
-    # Get description from docstring
-    description = inspect.getdoc(func) or f"Function {name}"
+        # Get description from docstring
+        description = inspect.getdoc(func) or f"Function {self.name}"
 
-    # Get function signature and type hints
-    sig = inspect.signature(func)
-    try:
-        type_hints = get_type_hints(func)
-    except (NameError, AttributeError):
-        # Fallback if type hints can't be resolved
-        type_hints = {}
+        # Get function signature and type hints
+        sig = inspect.signature(func)
+        try:
+            type_hints = get_type_hints(func)
+        except (NameError, AttributeError):
+            # Fallback if type hints can't be resolved
+            type_hints = {}
 
-    # Build JSON schema for parameters
-    properties = {}
-    required = []
+        # Build JSON schema for parameters
+        properties = {}
+        required = []
 
-    for param_name, param in sig.parameters.items():
-        # Skip self parameter for methods
-        if param_name == 'self':
-            continue
+        for param_name, param in sig.parameters.items():
+            # Skip self parameter for methods
+            if param_name == 'self':
+                continue
 
-        # Determine if parameter is required
-        if param.default is inspect.Parameter.empty:
-            required.append(param_name)
+            # Determine if parameter is required
+            if param.default is inspect.Parameter.empty:
+                required.append(param_name)
 
-        # Get parameter type information
-        param_type = type_hints.get(param_name)
-        param_schema = _type_to_json_schema(param_type, param.annotation)
+            # Get parameter type information
+            param_type = type_hints.get(param_name)
+            param_schema = _type_to_json_schema(param_type, param.annotation)
 
-        properties[param_name] = param_schema
+            properties[param_name] = param_schema
 
-        if get_origin(param_type) is Annotated:
-            args = get_args(param_type)
-            if len(args) >= 2:
-                # First arg is the actual type, second+ args are metadata
-                param_type = args[0]
-                # Look for string descriptions in metadata
-                for metadata in args[1:]:
-                    if isinstance(metadata, str):
-                        properties["description"] = metadata
-                        break
+            if get_origin(param_type) is Annotated:
+                args = get_args(param_type)
+                if len(args) >= 2:
+                    # First arg is the actual type, second+ args are metadata
+                    param_type = args[0]
+                    # Look for string descriptions in metadata
+                    for metadata in args[1:]:
+                        if isinstance(metadata, str):
+                            properties["description"] = metadata
+                            break
 
 
-    # Build the complete parameter schema
-    parameters = {
-        "type": "object",
-        "properties": properties,
-        "required": required
-    }
+        # Build the complete parameter schema
+        parameters = {
+            "type": "object",
+            "properties": properties,
+            "required": required
+        }
 
-    # Create the function definition
-    function_def: FunctionDefinition = {
-        "name": name,
-        "description": description,
-        "parameters": parameters,
-        "strict": False
-    }
+        # Create the function definition
+        function_def: FunctionDefinition = {
+            "name": self.name,
+            "description": description,
+            "parameters": parameters,
+            "strict": False
+        }
 
-    # Create the complete FunctionTool
-    tool: FunctionTool = {
-        "type": "function",
-        "function": function_def
-    }
+        # Create the complete FunctionToolDict
+        self._schema: FunctionToolDict = {
+            "type": "function",
+            "function": function_def
+        }
+        self._func = func
 
-    return tool
+    def __call__(self, **kwargs):
+        return self._func(**kwargs)
+    
+    def to_json_schema(self):
+        return self._schema
 
 
 def _type_to_json_schema(type_hint: Any, annotation: Any) -> dict:
@@ -148,7 +150,7 @@ def _type_to_json_schema(type_hint: Any, annotation: Any) -> dict:
 
     return schema
 
-def normalize_messages(messages: Union[str, List[Union[str, dict, Message]]]) -> List[dict]:
+def normalize_messages(messages: Union[str, List[Union[str, dict, Message]]]) -> List[MessageDict]:
     if isinstance(messages, str):
         return [{"role": "user", "content": messages}]
 
@@ -164,15 +166,18 @@ def normalize_messages(messages: Union[str, List[Union[str, dict, Message]]]) ->
             result.append(dict(msg))
     return result
 
-def normalize_tools(tools: Optional[List[Union[Callable, FunctionTool]]]) -> Optional[List[FunctionTool]]:
-    if not tools:
-        return None
+def normalize_tools(tools: Optional[List[Union[Callable, Tool, FunctionToolDict]]]) -> Mapping[str, Tool]:
+    result = {}
+    if not tools: return result
 
-    result = []
     for tool in tools:
-        if callable(tool) and not isinstance(tool, dict):
-            result.append(make_function_tool(tool))
-        else:
-            result.append(tool)
+        if callable(tool) and hasattr(tool, "to_json_schema") and hasattr(tool, "name"):
+            result[tool.name] = tool
+        elif callable(tool):
+            tool_wrapper = FunctionToolWrapper(tool)
+            result[tool_wrapper.name] = tool_wrapper
+        elif isinstance(tool, Mapping):
+            assert "name" in tool, "Tool dictionary must have 'name' field"
+            result[tool["name"]] = tool
     return result
 

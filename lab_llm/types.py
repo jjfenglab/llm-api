@@ -28,10 +28,17 @@ class FunctionDefinition(TypedDict):
     parameters: dict # JSON Schema
     strict: bool = False
 
-class FunctionTool(TypedDict):
+class FunctionToolDict(TypedDict):
     """Follows OpenAI ChatCompletionFunctionTool."""
     function: FunctionDefinition
     type: Literal["function"]
+
+class MessageDict(TypedDict):
+    """Standard message format, similar to LiteLLM's Message but as a TypedDict."""
+    role: Literal["user", "assistant", "system", "tool"]
+    content: Optional[str]
+    structured_content: Optional[Any]
+    tool_calls: Optional[List[ToolCall]]
 
 class CompletionFunction(Protocol):
     """Protocol for litellm.completion function signature."""
@@ -115,3 +122,28 @@ class CompletionKwargs(TypedDict):
     api_version: Optional[str]
     api_key: Optional[str]
     model_list: Optional[list]
+
+class Tool(Protocol):
+    """
+    A type that is able to produce a JSON schema of its inputs and outputs
+    for an LLM call, and that can be called directly with a set of kwargs
+    to produce outputs.
+    """
+    @property
+    def name(self) -> str:
+        ...
+
+    def to_json_schema(self) -> FunctionToolDict:
+        """
+        Convert the tool's inputs to a JSON schema dictionary.
+
+        Returns:
+            JSON schema dict representing the tool's input parameters
+        """
+        ...
+    
+    def __call__(self, **kwargs) -> Any:
+        """
+        Run the tool.
+        """
+        ...
