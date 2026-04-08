@@ -46,7 +46,21 @@ def wrap_completion_function(func: CompletionFunction,
 
 
 class LLMApi:
-    def __init__(self, completion_function: CompletionFunction):
+    """
+    Usage:
+    
+    ```
+    api = LLMApi(wrap_completion_function(litellm.completion, cache=..., model=Claude.SONNET_4), track_usage=True)
+    response = api.run("What is the capital of France?")
+    print(response, api.usage_tracker.last_usage())
+    ```
+    """
+    def __init__(self, completion_function: CompletionFunction, track_usage: bool = True):
+        if track_usage:
+            self.usage_tracker = UsageTracker()
+            completion_function = self.usage_tracker(completion_function)
+        else:
+            self.usage_tracker = None
         self.completion = completion_function
 
     def _execute_tool_call(self, tool_call: ToolCall, tools: Mapping[str, Tool]) -> str:
