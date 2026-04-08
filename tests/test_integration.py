@@ -25,8 +25,8 @@ except ImportError:
 import litellm
 from lab_llm import LLMApi, wrap_completion_function
 from lab_llm.constants import OpenAI, Claude, VersaOpenAI, VersaClaude
-from lab_llm.versa.openai import versa_openai_completion
-from lab_llm.versa.claude import versa_claude_completion
+from lab_llm.versa.openai import make_versa_openai_completion
+from lab_llm.versa.claude import make_versa_claude_completion
 from lab_llm.usage_tracker import UsageTracker
 
 
@@ -151,7 +151,7 @@ class TestIntegrationLLMAPIs:
         usage_tracker = UsageTracker()
 
         # Create Versa OpenAI completion function
-        versa_completion = versa_openai_completion()
+        versa_completion = make_versa_openai_completion()
 
         # Create LLMApi with wrapped completion function
         completion_func = wrap_completion_function(
@@ -185,7 +185,7 @@ class TestIntegrationLLMAPIs:
         usage_tracker = UsageTracker()
 
         # Create Versa Claude completion function
-        versa_completion = versa_claude_completion()
+        versa_completion = make_versa_claude_completion()
 
         # Create LLMApi with wrapped completion function
         completion_func = wrap_completion_function(

@@ -1,4 +1,4 @@
-from lab_llm.versa import versa_openai_completion, VersaOpenAIModelRamp, versa_claude_completion, VersaClaudeModelRamp
+from lab_llm.versa import make_versa_openai_completion, VersaOpenAIModelRamp, make_versa_claude_completion, VersaClaudeModelRamp
 from lab_llm import LLMApi, wrap_completion_function, CachingCompletion, ErrorTracker, UsageTracker
 import dotenv
 import logging
@@ -52,8 +52,8 @@ usage_tracker = UsageTracker()
 api = LLMApi(wrap_completion_function(
     # This is the base completion function - works out-of-the-box with litellm.completion
     # The versa version loads endpoint and API keys from the VERSA_ENDPOINT and VERSA_API_KEY env variables.
-    versa_openai_completion(),
-    # versa_openai_completion(), # Versa OpenAI version
+    make_versa_openai_completion(),
+    # make_versa_openai_completion(), # Versa OpenAI version
     # litellm.completion, # General public API version
     cache=CachingCompletion("./llm_cache.db"),
 

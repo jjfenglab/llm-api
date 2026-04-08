@@ -41,7 +41,7 @@ class CachingCompletion(CompletionFunctionWrapper):
 
         completion = ModelRamp(["gpt-4o-mini", "gpt-5"])(
             CachingCompletion("./cache.db")(
-                versa_openai_completion()
+                make_versa_openai_completion()
             )
         )
     """

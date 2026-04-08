@@ -14,7 +14,7 @@ VersaOpenAIModelRamp = ModelRamp([
     VersaOpenAI.O_1_2024_12
 ])
 
-def versa_openai_completion(completion_func: Optional[CompletionFunction] = None, api_key: Optional[str] = None, endpoint: Optional[str] = None, api_version: Optional[str] = None) -> CompletionFunction:
+def make_versa_openai_completion(completion_func: Optional[CompletionFunction] = None, api_key: Optional[str] = None, endpoint: Optional[str] = None, api_version: Optional[str] = None) -> CompletionFunction:
     """
     Wrapper around litellm.completion that configures Azure OpenAI parameters from environment variables.
 

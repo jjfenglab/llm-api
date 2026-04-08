@@ -14,7 +14,7 @@ VersaClaudeModelRamp = ModelRamp([
 
 VERSA_AWS_REGION = "us-west-2"
 
-def versa_claude_completion(completion_func: Optional[CompletionFunction] = None, access_key: Optional[str] = None, secret_key: Optional[str] = None, endpoint: Optional[str] = None, region: Optional[str] = None) -> CompletionFunction:
+def make_versa_claude_completion(completion_func: Optional[CompletionFunction] = None, access_key: Optional[str] = None, secret_key: Optional[str] = None, endpoint: Optional[str] = None, region: Optional[str] = None) -> CompletionFunction:
     """
     Wrapper around litellm.completion that configures Claude on AWS Bedrock parameters from environment variables.
 
