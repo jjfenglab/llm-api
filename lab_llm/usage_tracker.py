@@ -70,6 +70,10 @@ class UsageTracker(CompletionFunctionWrapper):
 
         return wrapped_completion
 
+    def reset(self):
+        """Set all usage to zero."""
+        self._usage_data = []
+
     def last_usage(self) -> Optional[Dict]:
         """
         Return the most recently captured usage data, or None if no calls made.
