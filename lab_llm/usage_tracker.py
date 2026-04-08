@@ -20,15 +20,16 @@ class UsageTracker(CompletionFunctionWrapper):
     to access the most recent usage and total cumulative usage.
 
     Example usage:
-        completion = UsageTracker()(litellm.completion)
+        tracker = UsageTracker()
+        completion = tracker(litellm.completion)
 
         # Make some calls
         response1 = completion(model="gpt-4o", messages=[{"role": "user", "content": "Hello"}])
         response2 = completion(model="gpt-4o", messages=[{"role": "user", "content": "Hi again"}])
 
         # Access usage data
-        last_usage = completion.last_usage()  # Usage from response2
-        total_usage = completion.total_usage()  # Cumulative usage from all calls
+        last_usage = tracker.last_usage()  # Usage from response2
+        total_usage = tracker.total_usage()  # Cumulative usage from all calls
 
     Can be composed with other wrappers:
         completion = UsageTracker()(

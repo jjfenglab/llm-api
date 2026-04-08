@@ -72,10 +72,15 @@ class LLMApi:
         tool_call_count = 0
 
         while True:
+            if max_tool_calls is not None and tool_call_count >= max_tool_calls:
+                tools_for_call = None
+            else:
+                tools_for_call = [tool.to_json_schema() for tool in normalized_tools.values()]
+
             response = self.completion(
                 model,
                 messages=normalized_messages,
-                tools=[tool.to_json_schema() for tool in normalized_tools.values()],
+                tools=tools_for_call,
                 **kwargs
             )
 
@@ -101,10 +106,6 @@ class LLMApi:
                     return content
                 else:
                     return content
-
-            # Execute tool calls
-            if max_tool_calls is not None and tool_call_count >= max_tool_calls:
-                raise ToolExecutionError(f"Maximum tool calls ({max_tool_calls}) exceeded")
 
             for tool_call in tool_calls:
                 logger.debug("Executing tool: %s", tool_call)

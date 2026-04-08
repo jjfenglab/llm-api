@@ -14,12 +14,12 @@ class FunctionToolWrapper(Tool):
     A helper type that wraps Python functions and produces JSON schemas
     for passing them into LLM calls, while also remaining callable.
     """
-    def __init__(self, func: Callable):
+    def __init__(self, func: Callable, name: Optional[str] = None, description: Optional[str] = None):
         # Get function name
-        self._name = func.__name__
+        self._name = name or func.__name__
 
         # Get description from docstring
-        description = inspect.getdoc(func) or f"Function {self._name}"
+        description = description or inspect.getdoc(func) or f"Function {self._name}"
 
         # Get function signature and type hints
         sig = inspect.signature(func)
