@@ -1,15 +1,29 @@
+from warnings import deprecated
+
 VERSA_API_VERSION = "2024-12-01-preview"
 AWS_REGION = "us-west-2"
 
 
 class VersaOpenAI:
-    GPT4_O_2024_08 = "azure/gpt-4o-2024-08-06"
-    GPT4_O_MINI_2024_07 = "azure/gpt-4o-mini-2024-07-18"
+    @property
+    @deprecated("Use GPT4_O_2024_11 instead")
+    def GPT4_O_2024_08(cls):
+        return "azure/gpt-4o-2024-08-06"
+    @property
+    @deprecated("Use GPT4_1_MINI_2025_04 instead")
+    def GPT4_O_MINI_2024_07(cls):
+        return "azure/gpt-4o-mini-2024-07-18"
     GPT4_O_2024_11 = "azure/gpt-4o-2024-11-20"
-    GPT4_O_MINI_2024_11 = "azure/gpt-4o-mini-2024-11-20"
+    @property
+    @deprecated("Use GPT4_1_MINI_2025_04 instead")
+    def GPT4_O_MINI_2024_11(): 
+        return "azure/gpt-4o-mini-2024-11-20"
+    GPT4_1_MINI_2025_04 = "azure/gpt-4.1-mini-2025-04-14"
+
     GPT5_2025_08 = "azure/gpt-5-2025-08-07"
     GPT5_MINI_2025_08 = "azure/gpt-5-mini-2025-08-07"
     GPT5_NANO_2025_08 = "azure/gpt-5-nano-2025-08-07"
+    GPT5_2_2025_12 = "azure/gpt-5.2-2025-12-11"
     O_1_2024_12 = "azure/o1-2024-12-17"
     O_4_MINI_2025_04 = "azure/o4-mini-2025-04-16"
 
