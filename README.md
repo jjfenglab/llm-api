@@ -67,8 +67,9 @@ OPENAI_ACCESS_TOKEN=your_openai_api_key
 ANTHROPIC_API_KEY=your_claude_api_key
 
 # For AWS Bedrock models (Claude, Llama, Cohere, Qwen)
-BEDROCK_ACCESS_KEY=your_aws_access_key
-BEDROCK_ACCESS_KEY_SECRET=your_aws_secret_key
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=us-west-2
 
 # For Azure OpenAI / Versa models
 VERSA_API_KEY=your_versa_api_key
