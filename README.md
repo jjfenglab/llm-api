@@ -9,7 +9,7 @@ A unified Python library for inference across multiple Large Language Model prov
 
 ## Features
 
-- **Multi-provider support**: Unified API for OpenAI, AWS Bedrock (Claude, Llama, Cohere, Qwen), and Azure OpenAI
+- **Multi-provider support**: Unified API for OpenAI, AWS Bedrock Claude, and Azure OpenAI
 - **Response caching**: DuckDB-based caching to avoid redundant API calls and reduce costs
 - **Batch processing**: Async batch inference with configurable concurrency
 - **Structured output**: Pydantic model validation for enforcing response schemas
@@ -33,35 +33,27 @@ pip install -e .
 ## Quick Start
 
 ```python
-import asyncio
-from dotenv import load_dotenv
+from lab_llm import LLMApi, wrap_completion_function, CachingCompletion
+from lab_llm.constants import Claude
+import litellm
+import dotenv
 
-from lab_llm.llm_api import LLMApi
-from lab_llm.constants import OpenAi, LLMModel
-from lab_llm.dataset import TextDataset
-from lab_llm.llm_cache import LLMCache
-from lab_llm.error_callback_handler import ErrorCallbackHandler
-from lab_llm.duckdb_handler import DuckDBHandler
+# Assume we have ANTHROPIC_API_KEY in the .env file
+dotenv.load_dotenv()
 
-load_dotenv()
+# Create the LLMApi instance by specifying a completion function,
+# which we wrap with a DuckDB-based cache to store previous outputs
+api = LLMApi(wrap_completion_function(
+    litellm.completion,
+    cache=CachingCompletion("./llmapi_cache.db")
+))
 
-# Initialize components
-db_handle = DuckDBHandler("./cache.db")
-cache = LLMCache(db_handle)
-model = LLMModel(name=OpenAi.GPT4_O_MINI)
-
-# Create API instance
-api = LLMApi(cache=cache, seed=42, model_type=model)
-
-# Single prompt
-response = api.get_output("What is the capital of France?")
-print(response)
-
-# Batch processing
-dataset = TextDataset(["What is 2+2?", "What is the speed of light?"])
-responses = asyncio.run(api.get_outputs(dataset))
-print(responses)
+result = api.run("What is the capital of France?", model=Claude.HAIKU_4_5)
+print(f"Result: {result}\n")
+# Result: The capital of France is Paris.
 ```
+
+See the Python scripts in `examples/` for more examples.
 
 ## Configuration
 
@@ -71,13 +63,17 @@ Create a `.env` file in your project directory with the required credentials:
 # For OpenAI models
 OPENAI_ACCESS_TOKEN=your_openai_api_key
 
+# For Claude models
+ANTHROPIC_API_KEY=your_claude_api_key
+
 # For AWS Bedrock models (Claude, Llama, Cohere, Qwen)
-BEDROCK_ACCESS_KEY=your_aws_access_key
-BEDROCK_ACCESS_KEY_SECRET=your_aws_secret_key
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=us-west-2
 
 # For Azure OpenAI / Versa models
 VERSA_API_KEY=your_versa_api_key
-VERSA_ENDPOINT=https://your-endpoint.openai.azure.com/openai/deployments/<model_name>/chat/completions?api-version=2024-10-21
+VERSA_ENDPOINT=https://your-endpoint.openai.azure.com/general
 ```
 
 Load environment variables in your code:
@@ -90,32 +86,44 @@ load_dotenv()
 ## Supported Models
 
 ### OpenAI (Direct API)
-- `OpenAi.GPT4_O` - GPT-4o
-- `OpenAi.GPT4_O_MINI` - GPT-4o Mini
-- `OpenAi.GPT5` - GPT-5 (reasoning model)
-- `OpenAi.GPT5_MINI` - GPT-5 Mini (reasoning model)
-- `OpenAi.GPT5_NANO` - GPT-5 Nano (reasoning model)
+
+- `OpenAI.GPT4_O` - GPT-4o
+- `OpenAI.GPT4_O_MINI` - GPT-4o Mini
+- `OpenAI.GPT5` - GPT-5 (reasoning model)
+- `OpenAI.GPT5_MINI` - GPT-5 Mini (reasoning model)
+- `OpenAI.GPT5_NANO` - GPT-5 Nano (reasoning model)
+
+### Anthropic (Direct API)
+
+- `Claude.SONNET_4` - Claude Sonnet 4
+- `Claude.HAIKU_4_5` - Claude Haiku 4.5
+- `Claude.SONNET_4_5` - Claude Sonnet 4.5
+- `Claude.OPUS_4_5` - Claude Opus 4.5
+- `Claude.HAIKU_4_6` - Claude Haiku 4.6
+- `Claude.SONNET_4_6` - Claude Sonnet 4.6
+- `Claude.OPUS_4_6` - Claude Opus 4.6
 
 ### Azure OpenAI (Versa)
-- `VersaOpenAi.GPT4_O_2024_08` - GPT-4o (August 2024)
-- `VersaOpenAi.GPT4_O_MINI_2024_07` - GPT-4o Mini (July 2024)
-- `VersaOpenAi.GPT5_2025_08` - GPT-5 (August 2025)
+
+- `VersaOpenAI.GPT4_O_2024_08` - GPT-4o (August 2024)
+- `VersaOpenAI.GPT4_O_MINI_2024_07` - GPT-4o Mini (July 2024)
+- `VersaOpenAI.GPT5_2025_08` - GPT-5 (August 2025)
 - And more...
 
 ### AWS Bedrock
-- `Claude.HAIKU_3` - Claude 3 Haiku
-- `Claude.HAIKU_3_5` - Claude 3.5 Haiku
-- `Claude.SONNET_4_5` - Claude Sonnet 4.5
-- `Meta.LLAMA_3_3_70B` - Llama 3.3 70B
-- `Meta.LLAMA_3_2_11B` - Llama 3.2 11B
-- `Cohere.COMMAND_R` - Command R
-- `Qwen.QWEN_3_235` - Qwen 3 235B
+
+- `VersaClaude.CLAUDE_SONNET_4` - Claude Sonnet 4
+- `VersaClaude.CLAUDE_OPUS_4_1` - Claude Opus 4.1
+- `VersaClaude.CLAUDE_HAIKU_4_5` - Claude Haiku 4.5
+- `VersaClaude.CLAUDE_OPUS_4_5` - Claude Opus 4.5
+- `VersaClaude.CLAUDE_SONNET_4_6` - Claude Sonnet 4.6
+- `VersaClaude.CLAUDE_OPUS_4_6` - Claude Opus 4.6
 
 For the complete list, see [lab_llm/constants.py](lab_llm/constants.py).
 
 ## Usage Examples
 
-### Using Structured Output (Pydantic)
+### Structured Output (Pydantic)
 
 ```python
 from pydantic import BaseModel
@@ -123,106 +131,120 @@ from pydantic import BaseModel
 class Answer(BaseModel):
     answer: str
     confidence: float
+    reasoning: str
 
-response = api.get_output(
-    "What is 2+2?",
-    response_model=Answer
+api = LLMApi(litellm.completion)
+
+response = api.run(
+    "What is 2+2? Provide your confidence level.",
+    response_format=Answer,
+    model="gpt-4o"
 )
-print(response.answer, response.confidence)
+print(f"Answer: {response.answer}")
+print(f"Confidence: {response.confidence}")
 ```
 
-### Using Reasoning Models
+### Tool/Function Calling
 
 ```python
-from lab_llm.constants import OpenAi, LLMModel
+from lab_llm import LLMApi, wrap_completion_function
+from lab_llm.constants import OpenAI
+import litellm
 
-model = LLMModel(name=OpenAi.GPT5)
-api = LLMApi(
-    cache=cache,
-    model_type=model,
-    reasoning_effort="medium",  # low, medium, high
-    verbosity="concise"         # concise, detailed
+def get_weather(city: str, country: str = "US") -> dict:
+    """Get current weather for a city."""
+    # Mock implementation
+    return {"temperature": "72°F", "conditions": "sunny"}
+
+api = LLMApi(litellm.completion)
+
+result = api.run(
+    "What's the weather like in San Francisco?",
+    tools=[get_weather],
+    model=OpenAI.GPT4_O_MINI
 )
+print(result)
 ```
 
-### Custom System Prompt
+### Error Handling and Tracking
 
 ```python
-response = api.get_output(
-    "Analyze this data",
-    system_prompt="You are a data scientist specializing in statistical analysis."
-)
-```
-
-## Error Tracking
-
-lab_llm provides error tracking to help debug failures during research workflows.
-
-### Quick Start
-
-```python
+from lab_llm import LLMApi, wrap_completion_function
 from lab_llm.error_tracker import ErrorTracker
-from lab_llm.error_callback_handler import ErrorCallbackHandler
+import logging
+import litellm
 
-# Create error tracker (logs to JSONL file)
-error_tracker = ErrorTracker("study_errors.jsonl")
-
-# Pass to error handler
-error_handler = ErrorCallbackHandler(logger, error_tracker=error_tracker)
-
-# Use with LLMApi
-llm_api = LLMApi(
-    cache=cache,
-    error_handler=error_handler,
-    # ... other params
+# Set up error tracking with JSONL logging
+logger = logging.getLogger(__name__)
+error_tracker = ErrorTracker(
+    logger=logger,
+    log_file="errors.jsonl",
+    include_traceback=True
 )
+
+api = LLMApi(wrap_completion_function(
+    litellm.completion,
+    error_tracker=error_tracker
+))
+
+try:
+    result = api.run("Hello", model="invalid-model-name")
+except Exception as e:
+    print(f"Error caught: {e}")
+    # Error details logged to errors.jsonl with classification
 ```
 
-### Analyzing Errors
+### Model Ramps and Usage Tracking
 
 ```python
-import pandas as pd
-from lab_llm.error_tracker import ErrorTracker
+from lab_llm import LLMApi, wrap_completion_function
+from lab_llm.parameter_wrappers import ModelRamp
+from lab_llm.usage_tracker import UsageTracker
+import litellm
 
-tracker = ErrorTracker("study_errors.jsonl")
+# Usage tracking collects total token counts
+usage_tracker = UsageTracker()
+# Model ramp allows selecting models by size
+model_ramp = ModelRamp([
+    "gpt-4o-mini",    # xs, sm
+    "gpt-4o",         # md
+    "gpt-4-turbo"     # lg, xl
+])
 
-# Get error summary
-summary = tracker.get_summary()
-print(summary)
+api = LLMApi(wrap_completion_function(
+    litellm.completion,
+    model_ramp=model_ramp,
+    usage_tracker=usage_tracker
+))
 
-# Analyze transient errors (should retry)
-transient = tracker.get_transient_errors()
-
-# Analyze permanent errors (need fixes)
-permanent = tracker.get_permanent_errors()
-
-# Investigate specific prompt
-errors = tracker.get_errors_by_prompt(prompt_hash)
+result = api.run("Explain quantum computing", model="lg")
+print(f"Response: {result}")
+print(f"Usage: {usage_tracker.total_usage()}")
 ```
-
-**Error Categories:**
-- **transient**: Timeouts, rate limits, network errors (will retry automatically)
-- **permanent**: Validation errors, serialization errors (need prompt/code fixes)
-- **user_interrupt**: Keyboard interrupts (stops execution)
-- **unknown**: Unclassified errors
-
-For a complete example, see [examples/analyze_failures.ipynb](examples/analyze_failures.ipynb).
 
 ## Development
 
 ### Running Tests
 
-Run all tests:
+Install test dependencies:
 
 ```bash
-pytest tests/ -v
+pip install -e ".[dev]"
 ```
 
-Run integration tests (requires API credentials in `.env`):
+Run unit and integration tests (requires API credentials):
 
 ```bash
-pytest tests/test_integration.py -v
+pytest tests/
 ```
+
+Run unit tests only:
+
+```bash
+pytest tests/ --ignore=tests/test_integration.py
+```
+
+**Note:** Integration tests require environment variables for API credentials. Copy `.env.example` to `.env` and fill in your credentials. Tests will be automatically skipped if the required environment variables are not present.
 
 ### Release Process
 

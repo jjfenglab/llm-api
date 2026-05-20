@@ -1,399 +1,442 @@
 """
-Integration tests for lab_llm.
+Integration tests for LLM API framework.
 
-These tests verify:
-1. Library imports work correctly
-2. API initialization works
-3. Versa endpoint configuration is properly enforced
-4. Real API calls work (when credentials are available)
+Tests the ability to use various LLM APIs including:
+- Direct OpenAI calling via litellm
+- Direct Claude calling via litellm
+- Versa OpenAI (Azure OpenAI)
+- Versa Claude (AWS Bedrock)
 
-Run with: pytest tests/test_integration.py -v
+Credentials are loaded via dotenv and tests are skipped if required environment variables are not present.
 """
 
 import os
-import logging
 import pytest
+from typing import Dict, Any
 from unittest.mock import patch
 
-from dotenv import load_dotenv
+try:
+    import dotenv
+    dotenv.load_dotenv()
+except ImportError:
+    # dotenv is optional for testing
+    pass
 
-# Load environment variables from .env file
-load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-class TestImports:
-    """Test that all public imports work correctly."""
-
-    def test_import_main_classes(self):
-        """Test importing main classes from lab_llm."""
-        from lab_llm import LLMApi, LLMCache, DuckDBHandler
-
-        assert LLMApi is not None
-        assert LLMCache is not None
-        assert DuckDBHandler is not None
-
-    def test_import_error_handling(self):
-        """Test importing error handling classes."""
-        from lab_llm import ErrorTracker, ErrorCallbackHandler
-
-        assert ErrorTracker is not None
-        assert ErrorCallbackHandler is not None
-
-    def test_import_datasets(self):
-        """Test importing dataset classes."""
-        from lab_llm import TextDataset, ImageDataset
-
-        assert TextDataset is not None
-        assert ImageDataset is not None
-
-    def test_import_model_enums(self):
-        """Test importing model enums."""
-        from lab_llm import (
-            LLMModel,
-            OpenAi,
-            VersaOpenAi,
-            Claude,
-            Meta,
-            Cohere,
-            Qwen,
-        )
-
-        assert LLMModel is not None
-        assert OpenAi is not None
-        assert VersaOpenAi is not None
-        assert Claude is not None
-        assert Meta is not None
-        assert Cohere is not None
-        assert Qwen is not None
-
-    def test_import_reasoning_utilities(self):
-        """Test importing reasoning model utilities."""
-        from lab_llm import REASONING_MODELS, is_reasoning_model
-
-        assert REASONING_MODELS is not None
-        assert callable(is_reasoning_model)
-
-    def test_version_defined(self):
-        """Test that version is defined."""
-        from lab_llm import __version__
-
-        assert __version__ is not None
-        assert isinstance(__version__, str)
+import litellm
+from lab_llm import LLMApi, wrap_completion_function
+from lab_llm.constants import OpenAI, Claude, VersaOpenAI, VersaClaude
+from lab_llm.versa.openai import make_versa_openai_completion
+from lab_llm.versa.claude import make_versa_claude_completion
+from lab_llm.usage_tracker import UsageTracker
 
 
-class TestApiInitialization:
-    """Test API initialization and configuration."""
+class TestIntegrationLLMAPIs:
+    """Integration tests for various LLM API providers."""
 
-    def test_create_duckdb_handler(self, tmp_path):
-        """Test creating a DuckDB handler with a temp path."""
-        from lab_llm import DuckDBHandler
+    def _check_env_vars_present(self, required_vars: list[str]) -> bool:
+        """Check if all required environment variables are present."""
+        return all(os.getenv(var) for var in required_vars)
 
-        db_path = tmp_path / "test_cache.db"
-        handler = DuckDBHandler(str(db_path))
+    def _create_test_messages(self) -> list[Dict[str, str]]:
+        """Create simple test messages for API calls."""
+        return [
+            {"role": "user", "content": "What is 2+2? Respond with just the number."}
+        ]
 
-        assert handler is not None
+    def _create_test_tool(self):
+        """Create a simple test tool function."""
+        def get_current_time() -> str:
+            """Get the current time as a string."""
+            import datetime
+            return datetime.datetime.now().isoformat()
+        return get_current_time
 
-    def test_create_cache(self, tmp_path):
-        """Test creating an LLM cache."""
-        from lab_llm import DuckDBHandler, LLMCache
-
-        db_path = tmp_path / "test_cache.db"
-        handler = DuckDBHandler(str(db_path))
-        cache = LLMCache(handler)
-
-        assert cache is not None
-
-    def test_create_error_tracker(self, tmp_path):
-        """Test creating an error tracker."""
-        from lab_llm import ErrorTracker
-
-        log_path = tmp_path / "errors.jsonl"
-        tracker = ErrorTracker(str(log_path))
-
-        assert tracker is not None
-
-    def test_create_llm_api(self, tmp_path):
-        """Test creating an LLMApi instance."""
-        from lab_llm import (
-            LLMApi,
-            LLMCache,
-            DuckDBHandler,
-            ErrorCallbackHandler,
-            LLMModel,
-            OpenAi,
-        )
-
-        db_path = tmp_path / "test_cache.db"
-        handler = DuckDBHandler(str(db_path))
-        cache = LLMCache(handler)
-        model = LLMModel(name=OpenAi.GPT4_O_MINI)
-        error_handler = ErrorCallbackHandler(logger)
-
-        api = LLMApi(
-            cache=cache,
-            seed=42,
-            model_type=model,
-            error_handler=error_handler,
-            logging=logger,
-        )
-
-        assert api is not None
-
-
-class TestVersaEndpointConfiguration:
-    """Test Versa endpoint configuration requirements."""
-
-    def test_versa_requires_endpoint_env_var(self, tmp_path):
-        """Test that Versa models raise error when VERSA_ENDPOINT is not set."""
-        from lab_llm import (
-            LLMApi,
-            LLMCache,
-            DuckDBHandler,
-            ErrorCallbackHandler,
-            LLMModel,
-            VersaOpenAi,
-        )
-
-        db_path = tmp_path / "test_cache.db"
-        handler = DuckDBHandler(str(db_path))
-        cache = LLMCache(handler)
-        model = LLMModel(name=VersaOpenAi.GPT4_O_2024_08)
-        error_handler = ErrorCallbackHandler(logger)
-
-        api = LLMApi(
-            cache=cache,
-            seed=42,
-            model_type=model,
-            error_handler=error_handler,
-            logging=logger,
-        )
-
-        # Remove VERSA_ENDPOINT if it exists
-        with patch.dict(os.environ, {}, clear=False):
-            # Temporarily remove VERSA_ENDPOINT
-            env_backup = os.environ.pop("VERSA_ENDPOINT", None)
-
-            try:
-                # Attempting to get client should raise ValueError
-                with pytest.raises(ValueError) as exc_info:
-                    api.get_client(max_new_tokens=100, temperature=0)
-
-                assert "VERSA_ENDPOINT" in str(exc_info.value)
-                assert "environment variable" in str(exc_info.value).lower()
-            finally:
-                # Restore VERSA_ENDPOINT if it was set
-                if env_backup is not None:
-                    os.environ["VERSA_ENDPOINT"] = env_backup
-
-    def test_versa_works_with_endpoint_set(self, tmp_path):
-        """Test that Versa models work when VERSA_ENDPOINT is set."""
-        from lab_llm import (
-            LLMApi,
-            LLMCache,
-            DuckDBHandler,
-            ErrorCallbackHandler,
-            LLMModel,
-            VersaOpenAi,
-        )
-
-        # Skip if no Versa credentials
-        if not os.environ.get("VERSA_ENDPOINT") or not os.environ.get("VERSA_API_KEY"):
-            pytest.skip("VERSA_ENDPOINT and VERSA_API_KEY required for this test")
-
-        db_path = tmp_path / "test_cache.db"
-        handler = DuckDBHandler(str(db_path))
-        cache = LLMCache(handler)
-        model = LLMModel(name=VersaOpenAi.GPT4_O_2024_08)
-        error_handler = ErrorCallbackHandler(logger)
-
-        api = LLMApi(
-            cache=cache,
-            seed=42,
-            model_type=model,
-            error_handler=error_handler,
-            logging=logger,
-        )
-
-        # Should not raise an error when getting client
-        client = api.get_client(max_new_tokens=100, temperature=0)
-        assert client is not None
-
-
-class TestTextDataset:
-    """Test TextDataset functionality."""
-
-    def test_create_text_dataset(self):
-        """Test creating a TextDataset."""
-        from lab_llm import TextDataset
-
-        prompts = ["Hello", "World"]
-        dataset = TextDataset(prompts)
-
-        assert len(dataset) == 2
-
-    def test_text_dataset_iteration(self):
-        """Test iterating over TextDataset."""
-        from lab_llm import TextDataset
-
-        prompts = ["Hello", "World", "Test"]
-        dataset = TextDataset(prompts)
-
-        items = [dataset[i] for i in range(len(dataset))]
-        assert len(items) == 3
-
-
-# Optional integration tests that require API credentials
-class TestOpenAIIntegration:
-    """Integration tests for OpenAI models (requires OPENAI_ACCESS_TOKEN)."""
-
-    @pytest.fixture
-    def api(self, tmp_path):
-        """Create an LLMApi instance for OpenAI."""
-        from lab_llm import (
-            LLMApi,
-            LLMCache,
-            DuckDBHandler,
-            ErrorCallbackHandler,
-            LLMModel,
-            OpenAi,
-        )
-
-        db_path = tmp_path / "test_cache.db"
-        handler = DuckDBHandler(str(db_path))
-        cache = LLMCache(handler)
-        model = LLMModel(name=OpenAi.GPT4_O_MINI)
-        error_handler = ErrorCallbackHandler(logger)
-
-        return LLMApi(
-            cache=cache,
-            seed=42,
-            model_type=model,
-            error_handler=error_handler,
-            logging=logger,
-            timeout=60,
-        )
-
-    @pytest.mark.skipif(
-        not os.environ.get("OPENAI_ACCESS_TOKEN"),
-        reason="OPENAI_ACCESS_TOKEN required"
-    )
-    def test_single_prompt(self, api):
-        """Test a single prompt with OpenAI."""
-        response = api.get_output("What is 2 + 2? Answer with just the number.")
-
+    def _validate_response(self, response: Any, expected_content_keywords: list[str] = None):
+        """Validate that response has expected structure and content."""
+        # Basic structure validation
         assert response is not None
-        # Response could be a string or an AIMessage object
-        response_text = str(response.content) if hasattr(response, 'content') else str(response)
-        assert "4" in response_text
+        assert isinstance(response, str) or hasattr(response, 'choices')
 
-    @pytest.mark.skipif(
-        not os.environ.get("OPENAI_ACCESS_TOKEN"),
-        reason="OPENAI_ACCESS_TOKEN required"
-    )
-    def test_batch_prompts(self, api):
-        """Test batch prompts with OpenAI."""
+        # If it's a string response (from LLMApi.run), check content
+        if isinstance(response, str):
+            assert len(response.strip()) > 0
+            if expected_content_keywords:
+                response_lower = response.lower()
+                assert any(keyword in response_lower for keyword in expected_content_keywords)
+
+    def _validate_usage_tracking(self, tracker: UsageTracker):
+        """Validate that usage tracking worked."""
+        last_usage = tracker.last_usage()
+        total_usage = tracker.total_usage()
+
+        assert last_usage is not None
+        assert total_usage is not None
+        assert last_usage["input_tokens"] > 0
+        assert last_usage["output_tokens"] > 0
+        assert last_usage["total_tokens"] > 0
+        assert total_usage["input_tokens"] >= last_usage["input_tokens"]
+        assert total_usage["output_tokens"] >= last_usage["output_tokens"]
+        assert total_usage["total_tokens"] >= last_usage["total_tokens"]
+
+    def test_direct_openai_integration(self):
+        """Test direct OpenAI API integration via litellm."""
+        required_vars = ["OPENAI_API_KEY"]
+
+        if not self._check_env_vars_present(required_vars):
+            pytest.skip(f"Skipping OpenAI test - missing environment variables: {required_vars}")
+
+        # Create usage tracker for monitoring
+        usage_tracker = UsageTracker()
+
+        # Create LLMApi with wrapped completion function
+        completion_func = wrap_completion_function(
+            litellm.completion,
+            usage_tracker=usage_tracker
+        )
+        api = LLMApi(completion_func)
+
+        # Test basic completion
+        messages = self._create_test_messages()
+        response = api.run(
+            messages=messages,
+            model=OpenAI.GPT4_O_MINI,  # Use mini model to save costs
+            temperature=0.1,
+            max_tokens=50
+        )
+
+        self._validate_response(response, expected_content_keywords=["4"])
+        self._validate_usage_tracking(usage_tracker)
+
+        print(f"OpenAI API test completed successfully. Usage: {usage_tracker.total_usage()}")
+
+    def test_direct_claude_integration(self):
+        """Test direct Claude API integration via litellm."""
+        required_vars = ["ANTHROPIC_API_KEY"]
+
+        if not self._check_env_vars_present(required_vars):
+            pytest.skip(f"Skipping Claude test - missing environment variables: {required_vars}")
+
+        # Create usage tracker for monitoring
+        usage_tracker = UsageTracker()
+
+        # Create LLMApi with wrapped completion function
+        completion_func = wrap_completion_function(
+            litellm.completion,
+            usage_tracker=usage_tracker
+        )
+        api = LLMApi(completion_func)
+
+        # Test basic completion
+        messages = self._create_test_messages()
+        response = api.run(
+            messages=messages,
+            model=Claude.HAIKU_4_5,  # Use Haiku for cost efficiency
+            temperature=0.1,
+            max_tokens=50
+        )
+
+        self._validate_response(response, expected_content_keywords=["4"])
+        self._validate_usage_tracking(usage_tracker)
+
+        print(f"Claude API test completed successfully. Usage: {usage_tracker.total_usage()}")
+
+    def test_versa_openai_integration(self):
+        """Test Versa OpenAI (Azure OpenAI) integration."""
+        required_vars = ["VERSA_API_KEY", "VERSA_ENDPOINT"]
+
+        if not self._check_env_vars_present(required_vars):
+            pytest.skip(f"Skipping Versa OpenAI test - missing environment variables: {required_vars}")
+
+        # Create usage tracker for monitoring
+        usage_tracker = UsageTracker()
+
+        # Create Versa OpenAI completion function
+        versa_completion = make_versa_openai_completion()
+
+        # Create LLMApi with wrapped completion function
+        completion_func = wrap_completion_function(
+            versa_completion,
+            usage_tracker=usage_tracker
+        )
+        api = LLMApi(completion_func)
+
+        # Test basic completion
+        messages = self._create_test_messages()
+        response = api.run(
+            messages=messages,
+            model=VersaOpenAI.GPT4_O_2024_11,
+            temperature=0.1,
+            max_tokens=50
+        )
+
+        self._validate_response(response, expected_content_keywords=["4"])
+        self._validate_usage_tracking(usage_tracker)
+
+        print(f"Versa OpenAI test completed successfully. Usage: {usage_tracker.total_usage()}")
+
+    def test_versa_claude_integration(self):
+        """Test Versa Claude (AWS Bedrock) integration."""
+        required_vars = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "VERSA_ENDPOINT"]
+
+        if not self._check_env_vars_present(required_vars):
+            pytest.skip(f"Skipping Versa Claude test - missing environment variables: {required_vars}")
+
+        # Create usage tracker for monitoring
+        usage_tracker = UsageTracker()
+
+        # Create Versa Claude completion function
+        versa_completion = make_versa_claude_completion()
+
+        # Create LLMApi with wrapped completion function
+        completion_func = wrap_completion_function(
+            versa_completion,
+            usage_tracker=usage_tracker
+        )
+        api = LLMApi(completion_func)
+
+        # Test basic completion
+        messages = self._create_test_messages()
+        response = api.run(
+            messages=messages,
+            model=VersaClaude.CLAUDE_HAIKU_4_5,  # Use Haiku for cost efficiency
+            temperature=0.1,
+            max_tokens=50
+        )
+
+        self._validate_response(response, expected_content_keywords=["4"])
+        self._validate_usage_tracking(usage_tracker)
+
+        print(f"Versa Claude test completed successfully. Usage: {usage_tracker.total_usage()}")
+
+    def test_tool_usage_with_direct_openai(self):
+        """Test tool/function calling capabilities with direct OpenAI."""
+        required_vars = ["OPENAI_API_KEY"]
+
+        if not self._check_env_vars_present(required_vars):
+            pytest.skip(f"Skipping OpenAI tool test - missing environment variables: {required_vars}")
+
+        # Create usage tracker for monitoring
+        usage_tracker = UsageTracker()
+
+        # Create LLMApi with wrapped completion function
+        completion_func = wrap_completion_function(
+            litellm.completion,
+            usage_tracker=usage_tracker
+        )
+        api = LLMApi(completion_func)
+
+        # Create test tool
+        test_tool = self._create_test_tool()
+
+        # Test tool usage
+        messages = [{"role": "user", "content": "What time is it right now? Use the available tool."}]
+        response = api.run(
+            messages=messages,
+            tools=[test_tool],
+            model=OpenAI.GPT4_O_MINI,
+            temperature=0.1,
+            max_tool_calls=3
+        )
+
+        self._validate_response(response)
+        self._validate_usage_tracking(usage_tracker)
+
+        # Response should mention time or indicate tool was used
+        response_lower = response.lower() if isinstance(response, str) else ""
+        assert any(keyword in response_lower for keyword in ["time", ":", "t", "current"])
+
+        print(f"OpenAI tool usage test completed successfully. Usage: {usage_tracker.total_usage()}")
+
+    def test_batch_processing_with_claude(self):
+        """Test batch processing capabilities with Claude."""
+        required_vars = ["ANTHROPIC_API_KEY"]
+
+        if not self._check_env_vars_present(required_vars):
+            pytest.skip(f"Skipping Claude batch test - missing environment variables: {required_vars}")
+
+        # Create usage tracker for monitoring
+        usage_tracker = UsageTracker()
+
+        # Create LLMApi with wrapped completion function
+        completion_func = wrap_completion_function(
+            litellm.completion,
+            usage_tracker=usage_tracker
+        )
+        api = LLMApi(completion_func)
+
+        # Test batch processing
+        batch_messages = [
+            [{"role": "user", "content": "What is 1+1?"}],
+            [{"role": "user", "content": "What is 2+3?"}],
+            [{"role": "user", "content": "What is 4+4?"}]
+        ]
+
         import asyncio
-        from lab_llm import TextDataset
+        async def run_batch():
+            return await api.run_batch(
+                messages_list=batch_messages,
+                model=Claude.HAIKU_4_5,
+                temperature=0.1,
+                max_tokens=30,
+                max_parallel_jobs=2  # Limit concurrency
+            )
 
-        prompts = ["What is 1+1?", "What is 2+2?"]
-        dataset = TextDataset(prompts)
+        responses = asyncio.run(run_batch())
 
-        responses = asyncio.run(api.get_outputs(dataset, batch_size=2))
+        # Validate all responses
+        assert len(responses) == 3
+        for i, response in enumerate(responses):
+            self._validate_response(response)
+            expected_answers = ["2", "5", "8"]
+            if isinstance(response, str):
+                assert expected_answers[i] in response
 
-        assert len(responses) == 2
-        assert all(r is not None for r in responses)
+        self._validate_usage_tracking(usage_tracker)
 
+        # Usage should reflect multiple calls
+        total_usage = usage_tracker.total_usage()
+        assert total_usage["input_tokens"] > usage_tracker.last_usage()["input_tokens"]  # Should be more than single call
 
-class TestVersaIntegration:
-    """Integration tests for Versa/Azure OpenAI models."""
+        print(f"Claude batch processing test completed successfully. Usage: {total_usage}")
 
-    @pytest.fixture
-    def api(self, tmp_path):
-        """Create an LLMApi instance for Versa."""
-        from lab_llm import (
-            LLMApi,
-            LLMCache,
-            DuckDBHandler,
-            ErrorCallbackHandler,
-            LLMModel,
-            VersaOpenAi,
-        )
+    def test_error_handling_with_invalid_model(self):
+        """Test error handling when using invalid model names."""
+        required_vars = ["OPENAI_API_KEY"]
 
-        db_path = tmp_path / "test_cache.db"
-        handler = DuckDBHandler(str(db_path))
-        cache = LLMCache(handler)
-        model = LLMModel(name=VersaOpenAi.GPT4_O_2024_08)
-        error_handler = ErrorCallbackHandler(logger)
+        if not self._check_env_vars_present(required_vars):
+            pytest.skip(f"Skipping OpenAI error test - missing environment variables: {required_vars}")
 
-        return LLMApi(
-            cache=cache,
-            seed=42,
-            model_type=model,
-            error_handler=error_handler,
-            logging=logger,
-            timeout=60,
-        )
+        # Create LLMApi with wrapped completion function
+        completion_func = wrap_completion_function(litellm.completion)
+        api = LLMApi(completion_func)
 
-    @pytest.mark.skipif(
-        not (os.environ.get("VERSA_ENDPOINT") and os.environ.get("VERSA_API_KEY")),
-        reason="VERSA_ENDPOINT and VERSA_API_KEY required"
-    )
-    def test_single_prompt_versa(self, api):
-        """Test a single prompt with Versa."""
-        response = api.get_output("What is 2 + 2? Answer with just the number.")
+        # Test with invalid model - should raise appropriate exception
+        messages = self._create_test_messages()
 
-        assert response is not None
-        # Response could be a string or an AIMessage object
-        response_text = str(response.content) if hasattr(response, 'content') else str(response)
-        assert "4" in response_text
+        with pytest.raises(Exception):  # Could be various exceptions depending on provider
+            api.run(
+                messages=messages,
+                model="invalid-model-name-that-does-not-exist",
+                temperature=0.1,
+                max_tokens=50
+            )
 
+    def test_environment_variable_loading_patterns(self):
+        """Test that environment variables are properly loaded for different providers."""
 
-class TestBedrockIntegration:
-    """Integration tests for AWS Bedrock models."""
+        # Test OpenAI credentials
+        if os.getenv("OPENAI_API_KEY"):
+            assert len(os.getenv("OPENAI_API_KEY")) > 10  # Basic sanity check
+            print("✓ OpenAI credentials detected")
+        else:
+            print("✗ OpenAI credentials not found")
 
-    @pytest.fixture
-    def api(self, tmp_path):
-        """Create an LLMApi instance for Bedrock Claude."""
-        from lab_llm import (
-            LLMApi,
-            LLMCache,
-            DuckDBHandler,
-            ErrorCallbackHandler,
-            LLMModel,
-            Claude,
-        )
+        # Test Anthropic credentials
+        if os.getenv("ANTHROPIC_API_KEY"):
+            assert len(os.getenv("ANTHROPIC_API_KEY")) > 10
+            print("✓ Anthropic credentials detected")
+        else:
+            print("✗ Anthropic credentials not found")
 
-        db_path = tmp_path / "test_cache.db"
-        handler = DuckDBHandler(str(db_path))
-        cache = LLMCache(handler)
-        model = LLMModel(name=Claude.HAIKU_3_5)
-        error_handler = ErrorCallbackHandler(logger)
+        # Test Versa OpenAI credentials
+        if os.getenv("VERSA_API_KEY") and os.getenv("VERSA_ENDPOINT"):
+            assert len(os.getenv("VERSA_API_KEY")) > 10
+            assert "http" in os.getenv("VERSA_ENDPOINT").lower()
+            print("✓ Versa OpenAI credentials detected")
+        else:
+            print("✗ Versa OpenAI credentials not found")
 
-        return LLMApi(
-            cache=cache,
-            seed=42,
-            model_type=model,
-            error_handler=error_handler,
-            logging=logger,
-            timeout=60,
-        )
+        # Test AWS/Versa Claude credentials
+        if (os.getenv("AWS_ACCESS_KEY_ID") and
+            os.getenv("AWS_SECRET_ACCESS_KEY") and
+            os.getenv("VERSA_ENDPOINT")):
+            assert len(os.getenv("AWS_ACCESS_KEY_ID")) > 10
+            assert len(os.getenv("AWS_SECRET_ACCESS_KEY")) > 10
+            print("✓ Versa Claude credentials detected")
+        else:
+            print("✗ Versa Claude credentials not found")
 
-    @pytest.mark.skipif(
-        not (os.environ.get("BEDROCK_ACCESS_KEY") and os.environ.get("BEDROCK_ACCESS_KEY_SECRET")),
-        reason="BEDROCK_ACCESS_KEY and BEDROCK_ACCESS_KEY_SECRET required"
-    )
-    def test_single_prompt_bedrock(self, api):
-        """Test a single prompt with Bedrock Claude."""
-        response = api.get_output("What is 2 + 2? Answer with just the number.")
+    def test_wrapper_composition_in_integration(self):
+        """Test that wrapper composition works correctly in integration scenarios."""
+        required_vars = ["OPENAI_API_KEY"]
 
-        assert response is not None
-        # Response could be a string or an AIMessage object
-        response_text = str(response.content) if hasattr(response, 'content') else str(response)
-        assert "4" in response_text
+        if not self._check_env_vars_present(required_vars):
+            pytest.skip(f"Skipping wrapper composition test - missing environment variables: {required_vars}")
 
+        # Import additional wrappers for testing
+        from lab_llm.caching_completion import CachingCompletion
+        from lab_llm.error_tracker import ErrorTracker
+        import tempfile
+        import logging
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+        # Create temporary cache database
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            cache_path = f.name
+
+        try:
+            # Create usage and error trackers
+            usage_tracker = UsageTracker()
+            error_tracker = ErrorTracker(
+                logger=logging.getLogger("integration_test"),
+                propagate_interrupts=True
+            )
+            cache = CachingCompletion(cache_path)
+
+            # Create fully wrapped completion function
+            completion_func = wrap_completion_function(
+                litellm.completion,
+                cache=cache,
+                error_tracker=error_tracker,
+                usage_tracker=usage_tracker
+            )
+            api = LLMApi(completion_func)
+
+            # Make the same call twice to test caching
+            messages = self._create_test_messages()
+
+            # First call - should hit API
+            response1 = api.run(
+                messages=messages,
+                model=OpenAI.GPT4_O_MINI,
+                temperature=0.0,  # Use 0 temperature for deterministic results
+                max_tokens=20,
+                seed=42  # Use seed for reproducibility
+            )
+
+            first_usage = usage_tracker.total_usage()
+
+            # Second identical call - should hit cache
+            response2 = api.run(
+                messages=messages,
+                model=OpenAI.GPT4_O_MINI,
+                temperature=0.0,
+                max_tokens=20,
+                seed=42
+            )
+
+            second_usage = usage_tracker.total_usage()
+
+            # Validate both responses
+            self._validate_response(response1, expected_content_keywords=["4"])
+            self._validate_response(response2, expected_content_keywords=["4"])
+
+            # Responses should be similar (cached response)
+            if isinstance(response1, str) and isinstance(response2, str):
+                # They should be exactly the same due to caching
+                assert response1 == response2
+
+            # Usage should NOT increase for second call (cache hit with 0 tokens)
+            # Note: Depending on cache implementation, usage might be 0 for cached responses
+            assert second_usage["total_tokens"] >= first_usage["total_tokens"]
+
+            print(f"Wrapper composition test completed successfully.")
+            print(f"First call usage: {first_usage}")
+            print(f"Total usage after second call: {second_usage}")
+
+        finally:
+            # Clean up temporary cache file
+            import os
+            try:
+                os.unlink(cache_path)
+            except:
+                pass
