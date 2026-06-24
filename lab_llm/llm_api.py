@@ -54,6 +54,7 @@ class LLMApi(LLM):
         return_exceptions: bool = False,
         track_usage: bool = False,
         streaming: bool = False,
+        use_responses_api: bool = False,
     ):
         super().__init__(seed, model_type, logging)
         self.cache = cache
@@ -63,6 +64,10 @@ class LLMApi(LLM):
         self.return_exceptions = return_exceptions
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
+        # Route VERSA reasoning-model calls through the Responses API v1 path so
+        # streamed reasoning-summary deltas keep the connection alive past the
+        # gateway's 300s timeout (chat-completions streams nothing while thinking).
+        self.use_responses_api = use_responses_api
         self.track_usage = track_usage
         self.usage_handler = UsageCallbackHandler() if track_usage else None
         self._cumulative_usage = {
@@ -178,7 +183,9 @@ class LLMApi(LLM):
             if response_model is not None:
                 return llm_response.model_dump_json()
             else:
-                return llm_response.content
+                # .text() yields the plain string for both chat-completions
+                # (string content) and the Responses API (list of content blocks).
+                return llm_response.text() if hasattr(llm_response, "text") else llm_response.content
         except Exception as e:
             if self.return_exceptions:
                 self.logging.error(e)
@@ -189,7 +196,7 @@ class LLMApi(LLM):
 
     def _get_callbacks(self):
         """Build the callbacks list, including usage handler if tracking is enabled."""
-        callbacks = [self.error_handler]
+        callbacks = [self.error_handler] if self.error_handler is not None else []
         if self.usage_handler is not None:
             callbacks.append(self.usage_handler)
         return callbacks
@@ -228,6 +235,27 @@ class LLMApi(LLM):
                     "VERSA_ENDPOINT environment variable is required for Versa models. "
                     "Set it to your Azure OpenAI endpoint URL with '<model_name>' as placeholder."
                 )
+            if self.use_responses_api and constants.is_reasoning_model(self.model_type.name):
+                # Responses API v1 path. Derive the v1 base from the chat-completions
+                # VERSA_ENDPOINT (.../openai/deployments/<model>/chat/completions -> .../openai/v1/).
+                # Streamed reasoning-summary deltas keep the connection alive past 300s.
+                v1_base = versa_endpoint.split("/deployments/")[0].rstrip("/") + "/v1/"
+                kwargs = dict(
+                    model=self.model_type.name,
+                    api_key=api_key,
+                    base_url=v1_base,
+                    use_responses_api=True,
+                    reasoning={"effort": self.reasoning_effort, "summary": "auto"},
+                    model_kwargs={"text": {"verbosity": self.verbosity}},
+                    max_tokens=max_new_tokens,
+                    timeout=self.timeout,
+                    rate_limiter=rate_limiter,
+                    callbacks=self._get_callbacks(),
+                )
+                if self.streaming:
+                    kwargs["streaming"] = True
+                return ChatOpenAI(**kwargs)
+
             resource_endpoint = versa_endpoint.replace(
                 "<model_name>", self.model_type.name
             )
@@ -254,6 +282,7 @@ class LLMApi(LLM):
                 kwargs["max_tokens"] = max_new_tokens
             return AzureChatOpenAI(**kwargs)
         elif constants.is_bedrock(self.model_type.name):
+            from botocore.config import Config as BotoConfig
             access_key = os.getenv("BEDROCK_ACCESS_KEY")
             secret_access_key = os.getenv("BEDROCK_ACCESS_KEY_SECRET")
             base_url = os.getenv("BEDROCK_ENDPOINT_URL")
@@ -266,6 +295,7 @@ class LLMApi(LLM):
                 model=constants.BEDROCK_MAPPINGS[self.model_type.name],
                 rate_limiter=rate_limiter,
                 callbacks=self._get_callbacks(),
+                config=BotoConfig(read_timeout=self.timeout),
             )
             if base_url:
                 kwargs["base_url"] = base_url
@@ -321,7 +351,8 @@ class LLMApi(LLM):
                 SystemMessage(content="You are a helpful assistant"),
                 HumanMessage(content=prompt),
             ]
-            llm_response = llm.invoke(messages)
+            invoke_kwargs = {"stream": True} if self.streaming else {}
+            llm_response = llm.invoke(messages, **invoke_kwargs)
             if self.usage_handler is not None:
                 self._report_usage(self.usage_handler.last_usage)
             if (response_model is not None) and constants.is_meta(self.model_type.name):
@@ -503,6 +534,8 @@ class LLMApi(LLM):
         batch_kwargs = {"return_exceptions": self.return_exceptions}
         if prompt_cache_key and constants.is_versa(self.model_type.name):
             batch_kwargs["extra_body"] = {"prompt_cache_key": prompt_cache_key}
+        if self.streaming:
+            batch_kwargs["stream"] = True
         batch_results = await llm.abatch(system_prompts, **batch_kwargs)
         batch_results_strs = []
         batch_input_tokens = 0

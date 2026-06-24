@@ -37,7 +37,7 @@ class Claude(str, Enum):
     OPUS_4_5 = "us.anthropic.claude-opus-4-5-20251101-v1:0"
     HAIKU_3 = "claude-haiku-3"
     HAIKU_3_5 = "anthropic.claude-3-5-haiku-20241022-v1:0"
-    SONNET_4_5 = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    SONNET_4_5 = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 
 class Meta(str, Enum):
@@ -67,7 +67,7 @@ BEDROCK_MAPPINGS = {
     Claude.HAIKU_4_5: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     Claude.SONNET_4: "us.anthropic.claude-sonnet-4-20250514-v1:0",
     Claude.OPUS_4_5: "us.anthropic.claude-opus-4-5-20251101-v1:0",
-    Claude.SONNET_4_5: "anthropic.claude-sonnet-4-5-20250929-v1:0",
+    Claude.SONNET_4_5: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
     Meta.LLAMA_3_2_90B: "us.meta.llama3-2-90b-instruct-v1:0",
     Meta.LLAMA_3_3_70B: "us.meta.llama3-3-70b-instruct-v1:0",
     Meta.LLAMA_3_2_11B: "us.meta.llama3-2-11b-instruct-v1:0",
