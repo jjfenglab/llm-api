@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lab_llm"  
-version = "1.0.0" 
+version = "1.1.0"
 description = "API logic to call different LLMs using LiteLLM"
 authors = [{name = "Jean Feng", email = "jean.feng@ucsf.edu"}]  
 readme = "README.md"

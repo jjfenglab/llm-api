@@ -5,6 +5,13 @@ from .usage_tracker import UsageTracker
 from .callback import CompletionCallback
 from .api import LLMApi, ToolExecutionError, wrap_completion_function
 from .types import CompletionFunction, CompletionFunctionWrapper, CompletionKwargs, MessageDict, FunctionToolDict
+from .versa import (
+    make_versa_openai_completion,
+    make_versa_openai_responses_completion,
+    make_versa_claude_completion,
+    VersaOpenAIModelRamp,
+    VersaClaudeModelRamp,
+)
 
 from .constants import (
     VersaClaude,

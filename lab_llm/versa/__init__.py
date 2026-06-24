@@ -1,2 +1,6 @@
 from .claude import VersaClaudeModelRamp, make_versa_claude_completion
-from .openai import VersaOpenAIModelRamp, make_versa_openai_completion
+from .openai import (
+    VersaOpenAIModelRamp,
+    make_versa_openai_completion,
+    make_versa_openai_responses_completion,
+)

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-24
+
+### Added
+- `make_versa_openai_responses_completion`: a Versa Azure OpenAI completion
+  function that drives the **Responses API** for reasoning models (GPT-5,
+  o-series). It streams with `reasoning.summary="auto"` so reasoning-summary
+  deltas keep the connection alive past the Versa gateway's ~300s idle timeout,
+  then consumes the stream and returns an aggregated `ModelResponse`. Streaming
+  is internal, so it composes transparently with `CachingCompletion`,
+  `UsageTracker`, and `LLMApi.run`. Configured via a dedicated
+  `VERSA_RESPONSES_ENDPOINT` env var (not derived from `VERSA_ENDPOINT`).
+
 ## [0.1.5] - 2025-01-14
 
 ### Added
