@@ -15,7 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then consumes the stream and returns an aggregated `ModelResponse`. Streaming
   is internal, so it composes transparently with `CachingCompletion`,
   `UsageTracker`, and `LLMApi.run`. Configured via a dedicated
-  `VERSA_RESPONSES_ENDPOINT` env var (not derived from `VERSA_ENDPOINT`).
+  `VERSA_RESPONSES_ENDPOINT` env var (the OpenAI-compatible `/openai/v1` base,
+  not derived from `VERSA_ENDPOINT`). The request is routed through litellm's
+  `openai/` provider, since Versa serves Responses on its OpenAI-compatible
+  surface; an `azure/` model id is normalized accordingly. Confirmed against a
+  live Versa GPT-5 deployment (reasoning, structured output, and fail-closed
+  truncation).
 
 ## [0.1.5] - 2025-01-14
 

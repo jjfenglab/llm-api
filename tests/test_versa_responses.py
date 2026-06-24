@@ -11,7 +11,10 @@ import pytest
 from pydantic import BaseModel
 
 from lab_llm import LLMApi, make_versa_openai_responses_completion
-from lab_llm.versa.openai import _chat_kwargs_to_responses_kwargs
+from lab_llm.versa.openai import (
+    _chat_kwargs_to_responses_kwargs,
+    _to_responses_provider_model,
+)
 
 REASONING_MODEL = "azure/gpt-5-mini"
 
@@ -137,7 +140,9 @@ def test_wrapper_adapts_stream_to_model_response():
 
     # Request was shaped for the Responses API
     assert captured["input"] == [{"role": "user", "content": "hi"}]
-    assert captured["model"] == REASONING_MODEL
+    # Routed through litellm's openai/ provider (Versa serves Responses on its
+    # OpenAI-compatible /openai/v1 surface); the azure/ id is normalized.
+    assert captured["model"] == "openai/gpt-5-mini"
     assert captured["reasoning"] == {"summary": "auto", "effort": "medium"}
     assert captured["api_base"] == "https://example.openai.azure.com/openai/v1/"
     assert captured["api_key"] == "key"
@@ -214,3 +219,35 @@ def test_missing_endpoint_raises(monkeypatch):
     monkeypatch.delenv("VERSA_RESPONSES_ENDPOINT", raising=False)
     with pytest.raises(ValueError, match="VERSA_RESPONSES_ENDPOINT"):
         make_versa_openai_responses_completion(api_key="k")
+
+
+@pytest.mark.parametrize("given,expected", [
+    ("azure/gpt-5-mini-2025-08-07", "openai/gpt-5-mini-2025-08-07"),
+    ("openai/gpt-5-mini", "openai/gpt-5-mini"),
+    ("gpt-5-mini", "openai/gpt-5-mini"),
+])
+def test_provider_normalized_to_openai(given, expected):
+    # Versa serves Responses on its OpenAI-compatible /openai/v1 surface, so the
+    # request must route through litellm's openai/ provider regardless of prefix.
+    assert _to_responses_provider_model(given) == expected
+
+
+def test_api_version_not_forwarded_by_default():
+    captured = {}
+    completion = make_versa_openai_responses_completion(
+        completion_func=make_fake_responses(captured),
+        endpoint="https://x/openai/v1", api_key="k",
+    )
+    completion(REASONING_MODEL, messages=[{"role": "user", "content": "hi"}])
+    # The /openai/v1 surface takes no api-version; none should be injected.
+    assert "api_version" not in captured
+
+
+def test_api_version_forwarded_when_set():
+    captured = {}
+    completion = make_versa_openai_responses_completion(
+        completion_func=make_fake_responses(captured),
+        endpoint="https://x/openai/v1", api_key="k", api_version="preview",
+    )
+    completion(REASONING_MODEL, messages=[{"role": "user", "content": "hi"}])
+    assert captured["api_version"] == "preview"

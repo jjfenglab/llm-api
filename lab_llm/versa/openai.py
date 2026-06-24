@@ -107,6 +107,23 @@ def _looks_like_reasoning_model(model: Optional[str]) -> bool:
     return name.startswith(("o1", "o3", "o4", "gpt-5"))
 
 
+def _to_responses_provider_model(model: str) -> str:
+    """Route the Responses call through litellm's OpenAI-compatible provider.
+
+    Versa serves the Responses API on its OpenAI-compatible ``/openai/v1``
+    surface (the same gateway the chat-completions deployments proxy fronts),
+    not on the deployment-less Azure ``/openai/responses`` path. With
+    ``model="azure/..."`` litellm builds the Azure URL
+    (``.../openai/v1/openai/responses?api-version=...``) and the gateway 404s, so
+    we normalize whatever provider prefix the caller used (``azure/``,
+    ``openai/``, or none) to ``openai/`` and let ``api_base`` point at
+    ``/openai/v1``. The caller-facing model id is preserved on the returned
+    ModelResponse; only the litellm request is re-providered.
+    """
+    name = model.split("/", 1)[1] if "/" in model else model
+    return f"openai/{name}"
+
+
 def _chat_kwargs_to_responses_kwargs(model: Optional[str], kwargs: dict) -> dict:
     """Translate chat-completions kwargs into Responses API kwargs.
 
@@ -287,19 +304,23 @@ def make_versa_openai_responses_completion(
     them observe the streaming.
 
     Maps environment variables:
-        VERSA_RESPONSES_ENDPOINT     -> api_base (the Azure Responses base URL)
+        VERSA_RESPONSES_ENDPOINT     -> api_base (the OpenAI-compatible v1 base)
         VERSA_API_KEY                -> api_key
-        VERSA_RESPONSES_API_VERSION  -> api_version (falls back to VERSA_API_VERSION)
+        VERSA_RESPONSES_API_VERSION  -> api_version (optional; not used by the
+                                        /openai/v1 surface, forwarded only if set)
 
     The Responses endpoint is required explicitly (it is a distinct URL from the
-    chat-completions ``VERSA_ENDPOINT`` and is not derived from it).
+    chat-completions ``VERSA_ENDPOINT`` and is not derived from it). Set it to the
+    OpenAI-compatible v1 base, e.g.
+    ``https://<resource>/openai/v1`` (for Versa: ``$RESOURCE_ENDPOINT/openai/v1``).
 
-    IMPORTANT — verify against the live gateway: with ``model="azure/..."``
-    litellm performs its own Azure URL construction, so the exact
-    ``VERSA_RESPONSES_ENDPOINT`` shape (resource root vs ``/openai/v1/``) and the
-    ``api_version`` that work depend on the deployment. Confirm a real GPT-5 call
-    before relying on this in production; ``VERSA_RESPONSES_API_VERSION`` exists
-    so the version can be tuned (e.g. ``preview``) without code changes.
+    Routing: Versa serves Responses on its OpenAI-compatible ``/openai/v1``
+    surface, so the request is sent through litellm's ``openai/`` provider
+    regardless of how the model was spelled for the Azure chat-completions path
+    (an ``azure/...`` id is normalized to ``openai/...``). The deployment-less
+    Azure route litellm would otherwise build (``.../openai/responses?api-version=``)
+    is not exposed by the gateway and returns 404. This path has been confirmed
+    against the live Versa endpoint with a GPT-5 reasoning call.
 
     Note: tool-calling and public ``stream=True`` are not supported through this
     path (both raise); for tools use ``make_versa_openai_completion``.
@@ -312,28 +333,25 @@ def make_versa_openai_responses_completion(
     """
     endpoint = endpoint or os.getenv("VERSA_RESPONSES_ENDPOINT")
     api_key = api_key or os.getenv("VERSA_API_KEY")
-    api_version = (
-        api_version
-        or os.getenv("VERSA_RESPONSES_API_VERSION")
-        or os.getenv("VERSA_API_VERSION", VERSA_API_VERSION)
-    )
+    # The OpenAI-compatible /openai/v1 surface does not use an api-version, so we
+    # do not inject one by default. The override stays available for a future
+    # surface that needs it, but it is forwarded only when explicitly set.
+    api_version = api_version or os.getenv("VERSA_RESPONSES_API_VERSION")
 
     if not endpoint:
         raise ValueError(
             "Versa Responses endpoint must be provided via the "
             "VERSA_RESPONSES_ENDPOINT environment variable "
-            "(e.g. https://<resource>.openai.azure.com/openai/v1/)."
+            "(e.g. https://<resource>/openai/v1)."
         )
     if not api_key:
         raise ValueError("API key must be provided via VERSA_API_KEY environment variable")
 
-    logging.info("Versa Azure OpenAI Responses Endpoint URL: %s", endpoint)
+    logging.info("Versa OpenAI Responses Endpoint URL: %s", endpoint)
 
-    azure_kwargs = {
-        "api_key": api_key,
-        "api_base": endpoint,
-        "api_version": api_version,
-    }
+    request_auth = {"api_key": api_key, "api_base": endpoint}
+    if api_version:
+        request_auth["api_version"] = api_version
 
     if completion_func is None:
         import litellm
@@ -344,11 +362,11 @@ def make_versa_openai_responses_completion(
             messages = []
         request_kwargs = _chat_kwargs_to_responses_kwargs(model, kwargs)
         stream = completion_func(
-            model=model,
+            model=_to_responses_provider_model(model),
             input=_messages_to_responses_input(messages),
             stream=True,
             **request_kwargs,
-            **azure_kwargs,
+            **request_auth,
         )
         final_response, streamed_text = _consume_responses_stream(stream)
         return _responses_to_model_response(model, final_response, streamed_text)
