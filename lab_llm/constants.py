@@ -52,7 +52,18 @@ class VersaClaude:
     CLAUDE_SONNET_4_6 = "bedrock/us.anthropic.claude-sonnet-4-6"
     CLAUDE_OPUS_4_6 = "bedrock/us.anthropic.claude-opus-4-6-v1"
 
-# Reasoning models support reasoning_effort and verbosity parameters
+# Reasoning models (the GPT-5 family and the o-series) accept `reasoning_effort`,
+# `verbosity`, and the Responses reasoning summary, and reject sampling params
+# such as `temperature`. `is_reasoning_model` is the single source of truth for
+# this distinction across the package.
+#
+# Classification is by model *family*: the litellm provider prefix (`azure/`,
+# `openai/`, ...) and version suffix are ignored and the leading family token is
+# matched, so new snapshots (e.g. `gpt-5-mini-2025-11-xx`) are recognized without
+# editing a list. REASONING_MODELS is an explicit escape hatch for any reasoning
+# model whose id does not follow the family naming; it is consulted as a fallback.
+_REASONING_MODEL_FAMILIES = ("gpt-5", "o1", "o3", "o4")
+
 REASONING_MODELS = {
     OpenAI.GPT5,
     OpenAI.GPT5_MINI,
@@ -60,7 +71,21 @@ REASONING_MODELS = {
     VersaOpenAI.GPT5_2025_08,
     VersaOpenAI.GPT5_MINI_2025_08,
     VersaOpenAI.GPT5_NANO_2025_08,
+    VersaOpenAI.GPT5_2_2025_12,
     VersaOpenAI.O_1_2024_12,
-    VersaOpenAI.O_4_MINI_2025_04
+    VersaOpenAI.O_4_MINI_2025_04,
 }
-is_reasoning_model = lambda x: x in REASONING_MODELS
+_EXPLICIT_REASONING_NAMES = {model.split("/")[-1].lower() for model in REASONING_MODELS}
+
+
+def is_reasoning_model(model: str | None) -> bool:
+    """Whether `model` names a reasoning model, ignoring provider prefix and version.
+
+    Matches the model family (GPT-5, o-series) so new snapshots are recognized
+    automatically, falling back to the explicit REASONING_MODELS set for ids that
+    do not follow the family naming.
+    """
+    if not model:
+        return False
+    name = model.split("/")[-1].lower()
+    return name.startswith(_REASONING_MODEL_FAMILIES) or name in _EXPLICIT_REASONING_NAMES

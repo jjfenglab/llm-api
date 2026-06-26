@@ -74,6 +74,11 @@ AWS_REGION=us-west-2
 # For Azure OpenAI / Versa models
 VERSA_API_KEY=your_versa_api_key
 VERSA_ENDPOINT=https://your-endpoint.openai.azure.com/general
+# Responses API base URL — used by reasoning models to avoid the gateway's
+# ~300s idle timeout. A distinct URL from VERSA_ENDPOINT (not derived from it).
+# Set it to the OpenAI-compatible v1 base, i.e. the resource root + /openai/v1.
+# (For the Versa gateway this is $RESOURCE_ENDPOINT/openai/v1.)
+VERSA_RESPONSES_ENDPOINT=https://your-endpoint/openai/v1
 ```
 
 Load environment variables in your code:
