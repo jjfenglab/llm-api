@@ -1,6 +1,6 @@
 import os
 from typing import Callable, Any, Optional, List
-from ..constants import VersaOpenAI, VERSA_API_VERSION
+from ..constants import VersaOpenAI, VERSA_API_VERSION, is_reasoning_model
 from ..types import CompletionFunction
 from ..parameter_wrappers import ModelRamp
 import logging
@@ -99,14 +99,6 @@ _RESPONSES_DROP_KWARGS = frozenset({
 })
 
 
-def _looks_like_reasoning_model(model: Optional[str]) -> bool:
-    """Heuristic: does this model id name a reasoning model (GPT-5, o-series)?"""
-    if not model:
-        return False
-    name = model.split("/")[-1].lower()
-    return name.startswith(("o1", "o3", "o4", "gpt-5"))
-
-
 def _to_responses_provider_model(model: str) -> str:
     """Route the Responses call through litellm's OpenAI-compatible provider.
 
@@ -154,7 +146,7 @@ def _chat_kwargs_to_responses_kwargs(model: Optional[str], kwargs: dict) -> dict
     # model thinks, keeping the connection alive past the gateway idle timeout.
     # Sending `reasoning` to a non-reasoning deployment (e.g. gpt-4o) 400s.
     effort = kwargs.get("reasoning_effort")
-    is_reasoning = effort is not None or _looks_like_reasoning_model(model)
+    is_reasoning = effort is not None or is_reasoning_model(model)
     if is_reasoning:
         reasoning = {"summary": kwargs.get("reasoning_summary", "auto")}
         if effort is not None:
