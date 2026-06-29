@@ -1,11 +1,12 @@
 import os
-from typing import Callable, Any, Optional, Literal, Unpack
+from typing_extensions import Unpack
+from typing import Callable, Any, Optional, Literal, TypeAlias
 from collections.abc import Sequence
 from .types import CompletionFunction, CompletionFunctionWrapper, CompletionKwargs
 import logging
 from functools import wraps
 
-type ModelSize = Literal["xs", "sm", "md", "lg", "xl"]
+ModelSize: TypeAlias = Literal["xs", "sm", "md", "lg", "xl"]
 MODEL_SIZES: list[ModelSize] = ["xs", "sm", "md", "lg", "xl"]
 
 class ModelRamp(CompletionFunctionWrapper):
