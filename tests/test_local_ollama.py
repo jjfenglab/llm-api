@@ -74,6 +74,7 @@ def test_ollama_basic_completion(ollama_config):
         temperature=0.0,
         max_tokens=20,
     )
+    print("HERE IS ollama's answer", response)
 
     assert isinstance(response, str)
     assert "4" in response
@@ -101,6 +102,7 @@ def test_ollama_structured_output(ollama_config):
         temperature=0.0,
         response_format=Answer,
     )
+    print("HERE IS ollama's answer", result)
 
     assert isinstance(result, Answer), f"Expected Answer, got {type(result).__name__}: {result!r}"
     assert result.answer == 4
