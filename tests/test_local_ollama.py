@@ -18,7 +18,7 @@ To run this test:
        export OLLAMA_TEST_MODEL=llama3.2:1b
 
 5. Run the test:
-       pytest tests/test_local_ollama.py -v
+       pytest tests/test_local_ollama.py -v -s
 
 The test is skipped (not failed) if either env var is unset or if the server
 at OLLAMA_API_BASE is unreachable, so it is safe to keep in the normal
