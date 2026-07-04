@@ -1,66 +1,93 @@
 """
-Tests that a local OpenAI-compatible endpoint can be reached via the standard
-LLMApi + wrap_completion_function flow. We mock litellm.completion and verify
-that api_base, api_key, and the openai/-prefixed model name are forwarded.
+Integration test for a locally running Ollama server via litellm.
+
+Skipped unless both env vars are set:
+    OLLAMA_API_BASE   e.g. http://localhost:11434
+    OLLAMA_TEST_MODEL e.g. llama3.2:1b  (must be pulled locally: `ollama pull llama3.2:1b`)
+
+Additionally skipped if the server is unreachable at OLLAMA_API_BASE, so this
+can safely stay in the normal test collection.
 """
 
-from unittest.mock import Mock
+import os
+import urllib.error
+import urllib.request
 
-from litellm import ModelResponse
+import pytest
+from pydantic import BaseModel
 
+try:
+    import dotenv
+    dotenv.load_dotenv()
+except ImportError:
+    pass
+
+import litellm
 from lab_llm import LLMApi, wrap_completion_function
+from lab_llm.usage_tracker import UsageTracker
 
 
-def _mock_completion_response(content: str = "hi") -> Mock:
-    response = Mock(spec=ModelResponse)
-    message = Mock()
-    message.content = content
-    message.tool_calls = None
-    message.model_dump = lambda: {"role": "assistant", "content": content}
-    choice = Mock()
-    choice.message = message
-    response.choices = [choice]
-    response.usage = None
-    return response
+def _ollama_reachable(api_base: str) -> bool:
+    try:
+        with urllib.request.urlopen(f"{api_base.rstrip('/')}/api/tags", timeout=2) as resp:
+            return resp.status == 200
+    except (urllib.error.URLError, TimeoutError, ConnectionError):
+        return False
 
 
-def test_default_parameters_forwards_local_endpoint_config():
-    """api_base/api_key set via wrap_completion_function reach the completion call."""
-    mock_completion = Mock(return_value=_mock_completion_response())
+@pytest.fixture(scope="module")
+def ollama_config():
+    api_base = os.getenv("OLLAMA_API_BASE")
+    model = os.getenv("OLLAMA_TEST_MODEL")
+    if not api_base or not model:
+        pytest.skip("Set OLLAMA_API_BASE and OLLAMA_TEST_MODEL to run Ollama integration tests")
+    if not _ollama_reachable(api_base):
+        pytest.skip(f"Ollama server at {api_base} is not reachable")
+    return {"api_base": api_base, "model": f"ollama_chat/{model}"}
 
-    api = LLMApi(
-        wrap_completion_function(
-            mock_completion,
-            api_base="http://localhost:8000/v1",
-            api_key="not-needed",
-        ),
-        track_usage=False,
+
+def test_ollama_basic_completion(ollama_config):
+    """A simple prompt round-trips through the local Ollama server."""
+    usage_tracker = UsageTracker()
+    api = LLMApi(wrap_completion_function(
+        litellm.completion,
+        usage_tracker=usage_tracker,
+        api_base=ollama_config["api_base"],
+    ))
+
+    response = api.run(
+        "What is 2+2? Respond with just the number.",
+        model=ollama_config["model"],
+        temperature=0.0,
+        max_tokens=20,
     )
 
-    result = api.run("hello", model="openai/Qwen/Qwen3-32B")
+    assert isinstance(response, str)
+    assert "4" in response
 
-    assert result == "hi"
-    mock_completion.assert_called_once()
-    _, kwargs = mock_completion.call_args
-    assert mock_completion.call_args.args[0] == "openai/Qwen/Qwen3-32B"
-    assert kwargs["api_base"] == "http://localhost:8000/v1"
-    assert kwargs["api_key"] == "not-needed"
+    last = usage_tracker.last_usage()
+    assert last is not None
+    assert last["input_tokens"] > 0
+    assert last["output_tokens"] > 0
 
 
-def test_per_call_overrides_default_endpoint():
-    """A per-call api_base overrides the default set at wrap time."""
-    mock_completion = Mock(return_value=_mock_completion_response())
+def test_ollama_structured_output(ollama_config):
+    """Pydantic response_format works via litellm's Ollama route."""
+    class Answer(BaseModel):
+        answer: int
+        explanation: str
 
-    api = LLMApi(
-        wrap_completion_function(
-            mock_completion,
-            api_base="http://localhost:8000/v1",
-            api_key="not-needed",
-        ),
-        track_usage=False,
+    api = LLMApi(wrap_completion_function(
+        litellm.completion,
+        api_base=ollama_config["api_base"],
+    ))
+
+    result = api.run(
+        "What is 2+2? Reply with the numeric answer and a one-sentence explanation.",
+        model=ollama_config["model"],
+        temperature=0.0,
+        response_format=Answer,
     )
 
-    api.run("hello", model="openai/some-model", api_base="http://otherhost:9000/v1")
-
-    _, kwargs = mock_completion.call_args
-    assert kwargs["api_base"] == "http://otherhost:9000/v1"
+    assert isinstance(result, Answer), f"Expected Answer, got {type(result).__name__}: {result!r}"
+    assert result.answer == 4
