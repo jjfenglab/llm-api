@@ -9,7 +9,7 @@ A unified Python library for inference across multiple Large Language Model prov
 
 ## Features
 
-- **Multi-provider support**: Unified API for OpenAI, AWS Bedrock Claude, and Azure OpenAI
+- **Multi-provider support**: Unified API for OpenAI, Anthropic, AWS Bedrock Claude, Azure OpenAI, and local OpenAI-compatible servers (vLLM, LM Studio, Ollama)
 - **Response caching**: DuckDB-based caching to avoid redundant API calls and reduce costs
 - **Batch processing**: Async batch inference with configurable concurrency
 - **Structured output**: Pydantic model validation for enforcing response schemas
@@ -74,6 +74,11 @@ AWS_REGION=us-west-2
 # For Azure OpenAI / Versa models
 VERSA_API_KEY=your_versa_api_key
 VERSA_ENDPOINT=https://your-endpoint.openai.azure.com/general
+
+# For a local OpenAI-compatible server (vLLM, LM Studio, etc.)
+# Only needed if you don't pass api_base/api_key explicitly to the completion function.
+OPENAI_API_BASE=http://localhost:8000/v1
+OPENAI_API_KEY=not-needed
 ```
 
 Load environment variables in your code:
@@ -119,9 +124,36 @@ load_dotenv()
 - `VersaClaude.CLAUDE_SONNET_4_6` - Claude Sonnet 4.6
 - `VersaClaude.CLAUDE_OPUS_4_6` - Claude Opus 4.6
 
+### Local OpenAI-Compatible Endpoints
+
+Any model served by a local OpenAI-compatible server (vLLM, LM Studio, llama.cpp's OpenAI server, etc.) can be used by prefixing the model name with `openai/` and pointing litellm at the server's base URL. Ollama has its own prefix (`ollama/`). See the [Local Model](#using-a-local-model-vllm-lm-studio-ollama) example below.
+
 For the complete list, see [lab_llm/constants.py](lab_llm/constants.py).
 
 ## Usage Examples
+
+### Using a Local Model (vLLM, LM Studio, Ollama)
+
+litellm routes any `openai/<model>` string through the OpenAI-compatible protocol, so a locally hosted server (vLLM, LM Studio, llama.cpp's OpenAI server, etc.) works with the same `LLMApi` you'd use for a hosted provider. Set the server's URL via `api_base` (and an `api_key` if the server requires one — most local servers ignore it, but litellm requires the parameter to be present):
+
+```python
+from lab_llm import LLMApi, wrap_completion_function, CachingCompletion
+import litellm
+
+api = LLMApi(wrap_completion_function(
+    litellm.completion,
+    cache=CachingCompletion("./llmapi_cache.db"),
+    api_base="http://localhost:8000/v1",
+    api_key="not-needed",
+))
+
+result = api.run(
+    "What is the capital of France?",
+    model="openai/Qwen/Qwen3-32B",
+)
+```
+
+You can also set `OPENAI_API_BASE` and `OPENAI_API_KEY` in your `.env` instead of passing them to `wrap_completion_function`. For Ollama, use the `ollama/` prefix (e.g. `model="ollama/llama3.3"`) with `OLLAMA_API_BASE`.
 
 ### Structured Output (Pydantic)
 
