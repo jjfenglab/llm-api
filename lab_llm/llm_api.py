@@ -7,7 +7,6 @@ import time
 from typing import Dict, List, Optional
 
 import pandas as pd
-from langchain.globals import set_debug
 from langchain_aws.chat_models.bedrock_converse import ChatBedrockConverse
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.rate_limiters import InMemoryRateLimiter
@@ -220,6 +219,10 @@ class LLMApi(LLM):
                 temperature=temperature,
                 seed=self.seed,
                 timeout=self.timeout,
+                # 5 SDK-level retries (backoff caps at 8s, Retry-After honored):
+                # the default 2 gives up inside a single sustained 429 window,
+                # turning a brief throttle into a dropped call.
+                max_retries=5,
                 rate_limiter=rate_limiter,
                 callbacks=self._get_callbacks(),
             )
@@ -249,11 +252,15 @@ class LLMApi(LLM):
                     model_kwargs={"text": {"verbosity": self.verbosity}},
                     max_tokens=max_new_tokens,
                     timeout=self.timeout,
+                    max_retries=5,
                     rate_limiter=rate_limiter,
                     callbacks=self._get_callbacks(),
                 )
                 if self.streaming:
                     kwargs["streaming"] = True
+                    # Without stream_usage the streamed responses carry no
+                    # usage_metadata, so batch token-usage logging reads zero.
+                    kwargs["stream_usage"] = True
                 return ChatOpenAI(**kwargs)
 
             resource_endpoint = versa_endpoint.replace(
@@ -266,6 +273,7 @@ class LLMApi(LLM):
                 temperature=temperature,
                 timeout=self.timeout,
                 seed=self.seed,
+                max_retries=5,
                 rate_limiter=rate_limiter,
                 callbacks=self._get_callbacks(),
             )
@@ -311,8 +319,10 @@ class LLMApi(LLM):
         response_model: BaseModel = None,
         validation_context: Optional[Dict] = None,
     ) -> Optional[str | BaseModel]:
-        set_debug(True)
-        self.logging.info("LLM (%s) prompt %s", self.model_type, prompt)
+        # No set_debug(True) here: it is process-global and sticky, and it dumps
+        # full prompts (which can carry clinical note text) into the logs of
+        # every later call in the process. Log the prompt size only.
+        self.logging.info("LLM (%s) prompt of %d chars", self.model_type, len(prompt))
         found_in_cache, cached_response = self.cache.get_response(
             str(prompt),
             self.model_type,
