@@ -438,6 +438,9 @@ class LLMApi(LLM):
                     # Identify prompts needing an API call (not found in cache)
                     prompts_to_run_df = df[~df["found_in_cache"]].copy()
                     prompts_to_run = prompts_to_run_df["prompt"].tolist()
+                # If _run_batch raises, the except block below must not reference
+                # an unbound raw_results — that masks the real error and kills retries.
+                raw_results = []
                 try:
                     if prompts_to_run:
                         llm = self.get_client(
