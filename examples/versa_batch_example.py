@@ -1,0 +1,247 @@
+"""
+Example usage of the LLMApi class with Versa, including batching and cache enabled.
+"""
+
+import asyncio
+import json
+from pydantic import BaseModel, Field
+
+from lab_llm import LLMApi, wrap_completion_function, CachingCompletion, ErrorTracker, UsageTracker, ModelRamp
+from lab_llm.versa import make_versa_openai_completion
+from lab_llm.constants import VersaOpenAI
+import logging
+
+logging.getLogger('lab_llm.api').setLevel(logging.INFO)
+
+country_names = [
+    "Afghanistan",
+    "Albania",
+	"Algeria",
+	"Andorra",
+	"Angola",
+	"Antigua & Deps",
+	"Argentina",
+	"Armenia",
+	"Australia",
+	"Austria",
+	"Azerbaijan",
+	"Bahamas",
+	"Bahrain",
+	"Bangladesh",
+	"Barbados",
+	"Belarus",
+	"Belgium",
+	"Belize",
+	"Benin",
+	"Bhutan",
+	"Bolivia",
+	"Bosnia Herzegovina",
+	"Botswana",
+	"Brazil",
+	"Brunei",
+	"Bulgaria",
+	"Burkina",
+	"Burundi",
+	"Cambodia",
+	"Cameroon",
+	"Canada",
+	"Cape Verde",
+	"Central African Rep",
+	"Chad",
+	"Chile",
+	"China",
+	"Colombia",
+	"Comoros",
+	"Congo",
+	"Congo, Democratic Rep",
+	"Costa Rica",
+	"Croatia",
+	"Cuba",
+	"Cyprus",
+	"Czech Republic",
+	"Denmark",
+	"Djibouti",
+	"Dominica",
+	"Dominican Republic",
+	"East Timor",
+	"Ecuador",
+	"Egypt",
+	"El Salvador",
+	"Equatorial Guinea",
+	"Eritrea",
+	"Estonia",
+	"Ethiopia",
+	"Fiji",
+	"Finland",
+	"France",
+	"Gabon",
+	"Gambia",
+	"Georgia",
+	"Germany",
+	"Ghana",
+	"Greece",
+	"Grenada",
+	"Guatemala",
+	"Guinea",
+	"Guinea-Bissau",
+	"Guyana",
+	"Haiti",
+	"Honduras",
+	"Hungary",
+	"Iceland",
+	"India",
+	"Indonesia",
+	"Iran",
+	"Iraq",
+	"Ireland Republic",
+	"Israel",
+	"Italy",
+	"Ivory Coast",
+	"Jamaica",
+	"Japan",
+	"Jordan",
+	"Kazakhstan",
+	"Kenya",
+	"Kiribati",
+	"Korea North",
+	"Korea South",
+	"Kosovo",
+	"Kuwait",
+	"Kyrgyzstan",
+	"Laos",
+	"Latvia",
+	"Lebanon",
+	"Lesotho",
+	"Liberia",
+	"Libya",
+	"Liechtenstein",
+	"Lithuania",
+	"Luxembourg",
+	"Macedonia",
+	"Madagascar",
+	"Malawi",
+	"Malaysia",
+	"Maldives",
+	"Mali",
+	"Malta",
+	"Marshall Islands",
+	"Mauritania",
+	"Mauritius",
+	"Mexico",
+	"Micronesia",
+	"Moldova",
+	"Monaco",
+	"Mongolia",
+	"Montenegro",
+	"Morocco",
+	"Mozambique",
+	"Myanmar, Burma",
+	"Namibia",
+	"Nauru",
+	"Nepal",
+	"Netherlands",
+	"New Zealand",
+	"Nicaragua",
+	"Niger",
+	"Nigeria",
+	"Norway",
+	"Oman",
+	"Pakistan",
+	"Palau",
+	"Panama",
+	"Papua New Guinea",
+	"Paraguay",
+	"Peru",
+	"Philippines",
+	"Poland",
+	"Portugal",
+	"Qatar",
+	"Romania",
+	"Russian Federation",
+	"Rwanda",
+	"St Kitts & Nevis",
+	"St Lucia",
+	"Saint Vincent & the Grenadines",
+	"Samoa",
+	"San Marino",
+	"Sao Tome & Principe",
+	"Saudi Arabia",
+	"Senegal",
+	"Serbia",
+	"Seychelles",
+	"Sierra Leone",
+	"Singapore",
+	"Slovakia",
+	"Slovenia",
+	"Solomon Islands",
+	"Somalia",
+	"South Africa",
+	"South Sudan",
+	"Spain",
+	"Sri Lanka",
+	"Sudan",
+	"Suriname",
+	"Swaziland",
+	"Sweden",
+	"Switzerland",
+	"Syria",
+	"Taiwan",
+	"Tajikistan",
+	"Tanzania",
+	"Thailand",
+	"Togo",
+	"Tonga",
+	"Trinidad & Tobago",
+	"Tunisia",
+	"Turkey",
+	"Turkmenistan",
+	"Tuvalu",
+	"Uganda",
+	"Ukraine",
+	"United Arab Emirates",
+	"United Kingdom",
+	"United States",
+	"Uruguay",
+	"Uzbekistan",
+	"Vanuatu",
+	"Vatican City",
+	"Venezuela",
+	"Vietnam",
+	"Yemen",
+	"Zambia",
+	"Zimbabwe"
+]
+
+def main():
+    # Set up the completion function with decorators
+    usage_tracker = UsageTracker()
+    cache = CachingCompletion("./llmapi_cache.db")
+
+    # Create the LLMApi instance
+    api = LLMApi(wrap_completion_function(
+        make_versa_openai_completion(),
+        cache=cache,
+        model=VersaOpenAI.GPT4_1_MINI_2025_04,
+        usage_tracker=usage_tracker
+    ))
+
+    messages_batch = [f"What is the capital of the country named {country}?" for country in country_names]
+    
+    results = asyncio.run(api.run_batch(
+        messages_batch,
+        max_parallel_jobs=4,  # Limit to 4 concurrent requests
+        # sleep_interval=0.5  # Optional sleep in between calls to prevent overloading the API
+    ))
+    
+    with open("capitals.json", "w") as file:
+        json.dump(dict(zip(country_names, results)), file, indent=2)
+    print("Results written to capitals.json.")
+
+    print("=== Usage Summary ===")
+    print(f"Total usage: {usage_tracker.total_usage()}")
+
+
+if __name__ == "__main__":
+    import dotenv
+    dotenv.load_dotenv()
+    main()
