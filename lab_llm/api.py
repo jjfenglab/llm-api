@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 from typing_extensions import Unpack
@@ -83,8 +84,39 @@ class LLMApi:
         **kwargs: Unpack[CompletionKwargs]
     ) -> Any:
         """
-        If `strict_response_format` is True, raise instead of falling back to the raw
-        string when a Pydantic `response_format` fails to parse.
+        Run a single completion request, executing tool calls in a loop until the
+        model returns a final response with no pending tool calls.
+
+        Parameters
+        ----------
+        messages : str or list of (str | dict | Message)
+            The conversation input. A plain string is treated as a single user
+            message. A list may contain strings, raw message dicts, or litellm
+            ``Message`` objects.
+        tools : list of (Callable | Tool | FunctionToolDict), optional
+            Tools the model may invoke. Callables are introspected to build a
+            JSON schema; ``Tool``/``FunctionToolDict`` objects are used as-is.
+        max_tool_calls : int, optional
+            Maximum number of tool calls to execute before stopping. Once the
+            limit is reached, tools are omitted from subsequent requests so the
+            model is forced to produce a final answer. If ``None``, tool calls
+            are unlimited.
+        model : str, optional
+            Model identifier to pass to the underlying completion function (e.g.
+            ``"gpt-4o"``). Overrides any model set on the completion function.
+        strict_response_format : bool, optional
+            If True, raise instead of falling back to the raw content string
+            when a Pydantic ``response_format`` fails to parse.
+        **kwargs : CompletionKwargs
+            Additional keyword arguments forwarded directly to the completion
+            function (e.g. ``temperature``, ``max_tokens``, ``response_format``).
+
+        Returns
+        -------
+        Any
+            The model's final response. If ``response_format`` is a Pydantic
+            model class, returns a validated instance of that class. Otherwise
+            returns the raw content string.
         """
         normalized_messages = normalize_messages(messages)
         normalized_tools = normalize_tools(tools)
@@ -178,44 +210,81 @@ class LLMApi:
         tools: Optional[List[Union[Callable, FunctionToolDict]]] = None,
         max_tool_calls: Optional[int] = None,
         max_parallel_jobs: Optional[int] = None,
+        sleep_interval: Optional[float] = None,
         model: Optional[str] = None,
         return_exceptions: bool = False,
         strict_response_format: bool = False,
         **kwargs: Unpack[CompletionKwargs]
     ) -> List[Any]:
         """
-        If `return_exceptions` is True, a failed item does not abort the batch: its
-        exception is returned in place, preserving the order of `messages_list`.
-        `strict_response_format` is forwarded to `run`.
+        Run multiple completion requests concurrently, preserving input order in
+        the returned results.
+
+        Parameters
+        ----------
+        messages_list : list of (str | list of (str | dict | Message))
+            One entry per request. Each entry follows the same format accepted
+            by ``run()``: a plain string or a list of message objects.
+        tools : list of (Callable | FunctionToolDict), optional
+            Tools available to the model for every request in the batch. See
+            ``run()`` for accepted formats.
+        max_tool_calls : int, optional
+            Maximum tool calls per individual request. Passed unchanged to each
+            ``run()`` invocation.
+        max_parallel_jobs : int, optional
+            Maximum number of requests to run concurrently. Defaults to
+            ``os.cpu_count()`` when ``None``.
+        sleep_interval : float, optional
+            Seconds to sleep after each completed request (within a worker).
+            Useful for rate-limiting. No sleep is applied when ``None``.
+        model : str, optional
+            Model identifier forwarded to each ``run()`` call.
+        return_exceptions : bool, optional
+            If True, a failed request does not abort the batch: its exception
+            is returned in place at the corresponding index, preserving the
+            order of ``messages_list``. If False (default), the first exception
+            propagates and cancels the batch.
+        strict_response_format : bool, optional
+            Forwarded to each ``run()`` call; see ``run()``.
+        **kwargs : CompletionKwargs
+            Additional keyword arguments forwarded to every ``run()`` call.
+
+        Returns
+        -------
+        list of Any
+            Results in the same order as ``messages_list``. Each element is the
+            return value of the corresponding ``run()`` call (a string or a
+            parsed Pydantic model instance), or the raised exception when
+            ``return_exceptions`` is True.
         """
         if max_parallel_jobs is None:
-            # Use asyncio.gather for unlimited parallelism
-            tasks = [
-                self._run_single_async(messages, tools, max_tool_calls, model=model,
-                                       strict_response_format=strict_response_format, **kwargs)
-                for messages in messages_list
-            ]
-            return await asyncio.gather(*tasks, return_exceptions=return_exceptions)
-        else:
-            # Use asyncio.Semaphore with Queue for limited parallelism
-            semaphore = asyncio.Semaphore(max_parallel_jobs)
-            results = [None] * len(messages_list)
+            max_parallel_jobs = os.cpu_count()
 
-            async def process_item(index: int, messages: Union[str, List[Union[str, dict, Message]]]):
-                async with semaphore:
-                    try:
-                        results[index] = await self._run_single_async(
-                            messages, tools, max_tool_calls, model=model,
-                            strict_response_format=strict_response_format, **kwargs
-                        )
-                    except Exception as e:
-                        if not return_exceptions:
-                            raise
-                        results[index] = e
+        # Use asyncio.Semaphore with Queue for limited parallelism
+        semaphore = asyncio.Semaphore(max_parallel_jobs)
+        results = [None] * len(messages_list)
 
-            tasks = [
-                process_item(i, messages)
-                for i, messages in enumerate(messages_list)
-            ]
-            await asyncio.gather(*tasks)
-            return results
+        num_prompts = len(messages_list)
+
+        async def process_item(index: int, messages: Union[str, List[Union[str, dict, Message]]]):
+            async with semaphore:
+                logger.info(f"Processing prompt {index} of {num_prompts}")
+                try:
+                    results[index] = await self._run_single_async(
+                        messages, tools, max_tool_calls, model=model,
+                        strict_response_format=strict_response_format, **kwargs
+                    )
+                except Exception as e:
+                    if not return_exceptions:
+                        raise
+                    results[index] = e
+                logger.info(f"Received response for prompt {index} of {num_prompts}")
+                if sleep_interval is not None:
+                    await asyncio.sleep(sleep_interval)
+
+        tasks = [
+            process_item(i, messages)
+            for i, messages in enumerate(messages_list)
+        ]
+        await asyncio.gather(*tasks)
+        return results

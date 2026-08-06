@@ -59,7 +59,12 @@ class CachingCompletion(CompletionFunctionWrapper):
         self.db_path = Path(db_path)
         self.return_original_usage = return_original_usage
         self._ensure_db_exists()
-        self._create_tables()
+        needs_creation = not self.db_path.exists()
+        self.connection = duckdb.connect(self.db_path)
+        if needs_creation: self._create_tables()
+
+    def __del__(self):
+        if self.connection: self.connection.close()
 
     def __call__(self, func: CompletionFunction) -> CompletionFunction:
         """
@@ -119,25 +124,24 @@ class CachingCompletion(CompletionFunctionWrapper):
 
     def _create_tables(self):
         """Create the cache table if it doesn't exist."""
-        if self.db_path.exists(): return
-
-        with duckdb.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE SEQUENCE id_sequence START 1;
-                CREATE TABLE IF NOT EXISTS completion_cache (
-                    id INTEGER PRIMARY KEY DEFAULT nextval('id_sequence'),
-                    cache_key VARCHAR NOT NULL UNIQUE,
-                    model VARCHAR NOT NULL,
-                    response_json TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
+        with self.connection.cursor() as cursor:
+            cursor.execute("""
+                    CREATE SEQUENCE id_sequence START 1;
+                    CREATE TABLE IF NOT EXISTS completion_cache (
+                        id INTEGER PRIMARY KEY DEFAULT nextval('id_sequence'),
+                        cache_key VARCHAR NOT NULL UNIQUE,
+                        model VARCHAR NOT NULL,
+                        response_json TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
 
             # Create indexes for performance
-            conn.execute("""
+            cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_cache_key
                 ON completion_cache(cache_key);
             """)
+            cursor.commit()
 
     def _should_cache(self, **kwargs) -> bool:
         """
@@ -256,8 +260,8 @@ class CachingCompletion(CompletionFunctionWrapper):
         Returns:
             ModelResponse if found, None otherwise
         """
-        with duckdb.connect(self.db_path) as conn:
-            result = conn.execute(
+        with self.connection.cursor() as cursor:
+            result = cursor.execute(
                 """
                 SELECT response_json
                 FROM completion_cache
@@ -266,11 +270,11 @@ class CachingCompletion(CompletionFunctionWrapper):
                 [cache_key]
             ).fetchone()
 
-            if result is None:
-                return None
+        if result is None:
+            return None
 
-            response_json = result[0]
-            return self._build_model_response_from_cache(response_json)
+        response_json = result[0]
+        return self._build_model_response_from_cache(response_json)
 
     def _cache_response(self, cache_key: str, model: str, response: ModelResponse):
         """
@@ -284,9 +288,8 @@ class CachingCompletion(CompletionFunctionWrapper):
         # Serialize response to JSON
         response_json = self._serialize_model_response(response)
 
-        with duckdb.connect(self.db_path) as conn:
-            # Use INSERT OR REPLACE to handle potential duplicates
-            conn.execute(
+        with self.connection.cursor() as cursor:
+            cursor.execute(
                 """
                 INSERT INTO completion_cache
                 (cache_key, model, response_json, created_at)
@@ -295,6 +298,7 @@ class CachingCompletion(CompletionFunctionWrapper):
                 """,
                 [cache_key, model, response_json]
             )
+            cursor.commit()
 
     def _serialize_model_response(self, response: ModelResponse) -> str:
         """
