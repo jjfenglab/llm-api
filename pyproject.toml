@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lab_llm"  
-version = "1.0.1" 
+version = "1.0.2" 
 description = "API logic to call different LLMs using LiteLLM"
 authors = [{name = "Jean Feng", email = "jean.feng@ucsf.edu"}, {name = "Venkatesh Sivaraman", email = "venkatesh.sivaraman.98@gmail.com"}]  
 readme = "README.md"
@@ -15,5 +15,6 @@ dependencies = [
     "duckdb>=0.7.0",
     "litellm>=1.83.1",
     "openai>=1.66.5",
-    "tiktoken>=0.9.0"
+    "tiktoken>=0.9.0",
+    "boto3>=1.43.0"
 ]
