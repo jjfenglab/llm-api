@@ -79,8 +79,13 @@ class LLMApi:
         tools: Optional[List[Union[Callable, Tool, FunctionToolDict]]] = None,
         max_tool_calls: Optional[int] = None,
         model: Optional[str] = None,
+        strict_response_format: bool = False,
         **kwargs: Unpack[CompletionKwargs]
     ) -> Any:
+        """
+        If `strict_response_format` is True, raise instead of falling back to the raw
+        string when a Pydantic `response_format` fails to parse.
+        """
         normalized_messages = normalize_messages(messages)
         normalized_tools = normalize_tools(tools)
 
@@ -114,6 +119,8 @@ class LLMApi:
                     try:
                         return response_format.model_validate_json(content)
                     except Exception:
+                        if strict_response_format:
+                            raise
                         # Fallback to string if parsing fails
                         return content
                 elif response_format:
@@ -147,6 +154,7 @@ class LLMApi:
         tools: Optional[List[Union[Callable, FunctionToolDict]]] = None,
         max_tool_calls: Optional[int] = None,
         model: Optional[str] = None,
+        strict_response_format: bool = False,
         **kwargs: Unpack[CompletionKwargs]
     ) -> Any:
         # Run the synchronous version in an executor to avoid blocking
@@ -154,11 +162,12 @@ class LLMApi:
         return await loop.run_in_executor(
             None,
             partial(
-                self.run, 
+                self.run,
                 messages,
                 tools=tools,
                 max_tool_calls=max_tool_calls,
                 model=model,
+                strict_response_format=strict_response_format,
                 **kwargs
             )
         )
@@ -170,15 +179,23 @@ class LLMApi:
         max_tool_calls: Optional[int] = None,
         max_parallel_jobs: Optional[int] = None,
         model: Optional[str] = None,
+        return_exceptions: bool = False,
+        strict_response_format: bool = False,
         **kwargs: Unpack[CompletionKwargs]
     ) -> List[Any]:
+        """
+        If `return_exceptions` is True, a failed item does not abort the batch: its
+        exception is returned in place, preserving the order of `messages_list`.
+        `strict_response_format` is forwarded to `run`.
+        """
         if max_parallel_jobs is None:
             # Use asyncio.gather for unlimited parallelism
             tasks = [
-                self._run_single_async(messages, tools, max_tool_calls, model=model, **kwargs)
+                self._run_single_async(messages, tools, max_tool_calls, model=model,
+                                       strict_response_format=strict_response_format, **kwargs)
                 for messages in messages_list
             ]
-            return await asyncio.gather(*tasks)
+            return await asyncio.gather(*tasks, return_exceptions=return_exceptions)
         else:
             # Use asyncio.Semaphore with Queue for limited parallelism
             semaphore = asyncio.Semaphore(max_parallel_jobs)
@@ -186,7 +203,15 @@ class LLMApi:
 
             async def process_item(index: int, messages: Union[str, List[Union[str, dict, Message]]]):
                 async with semaphore:
-                    results[index] = await self._run_single_async(messages, tools, max_tool_calls, model=model, **kwargs)
+                    try:
+                        results[index] = await self._run_single_async(
+                            messages, tools, max_tool_calls, model=model,
+                            strict_response_format=strict_response_format, **kwargs
+                        )
+                    except Exception as e:
+                        if not return_exceptions:
+                            raise
+                        results[index] = e
 
             tasks = [
                 process_item(i, messages)
