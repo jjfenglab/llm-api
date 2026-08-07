@@ -80,6 +80,7 @@ class LLMApi:
         tools: Optional[List[Union[Callable, Tool, FunctionToolDict]]] = None,
         max_tool_calls: Optional[int] = None,
         model: Optional[str] = None,
+        strict_response_format: bool = False,
         **kwargs: Unpack[CompletionKwargs]
     ) -> Any:
         """
@@ -103,6 +104,9 @@ class LLMApi:
         model : str, optional
             Model identifier to pass to the underlying completion function (e.g.
             ``"gpt-4o"``). Overrides any model set on the completion function.
+        strict_response_format : bool, optional
+            If True, raise instead of falling back to the raw content string
+            when a Pydantic ``response_format`` fails to parse.
         **kwargs : CompletionKwargs
             Additional keyword arguments forwarded directly to the completion
             function (e.g. ``temperature``, ``max_tokens``, ``response_format``).
@@ -147,6 +151,8 @@ class LLMApi:
                     try:
                         return response_format.model_validate_json(content)
                     except Exception:
+                        if strict_response_format:
+                            raise
                         # Fallback to string if parsing fails
                         return content
                 elif response_format:
@@ -180,6 +186,7 @@ class LLMApi:
         tools: Optional[List[Union[Callable, FunctionToolDict]]] = None,
         max_tool_calls: Optional[int] = None,
         model: Optional[str] = None,
+        strict_response_format: bool = False,
         **kwargs: Unpack[CompletionKwargs]
     ) -> Any:
         # Run the synchronous version in an executor to avoid blocking
@@ -187,11 +194,12 @@ class LLMApi:
         return await loop.run_in_executor(
             None,
             partial(
-                self.run, 
+                self.run,
                 messages,
                 tools=tools,
                 max_tool_calls=max_tool_calls,
                 model=model,
+                strict_response_format=strict_response_format,
                 **kwargs
             )
         )
@@ -204,6 +212,8 @@ class LLMApi:
         max_parallel_jobs: Optional[int] = None,
         sleep_interval: Optional[float] = None,
         model: Optional[str] = None,
+        return_exceptions: bool = False,
+        strict_response_format: bool = False,
         **kwargs: Unpack[CompletionKwargs]
     ) -> List[Any]:
         """
@@ -229,6 +239,13 @@ class LLMApi:
             Useful for rate-limiting. No sleep is applied when ``None``.
         model : str, optional
             Model identifier forwarded to each ``run()`` call.
+        return_exceptions : bool, optional
+            If True, a failed request does not abort the batch: its exception
+            is returned in place at the corresponding index, preserving the
+            order of ``messages_list``. If False (default), the first exception
+            propagates and cancels the batch.
+        strict_response_format : bool, optional
+            Forwarded to each ``run()`` call; see ``run()``.
         **kwargs : CompletionKwargs
             Additional keyword arguments forwarded to every ``run()`` call.
 
@@ -237,7 +254,8 @@ class LLMApi:
         list of Any
             Results in the same order as ``messages_list``. Each element is the
             return value of the corresponding ``run()`` call (a string or a
-            parsed Pydantic model instance).
+            parsed Pydantic model instance), or the raised exception when
+            ``return_exceptions`` is True.
         """
         if max_parallel_jobs is None:
             max_parallel_jobs = os.cpu_count()
@@ -251,7 +269,15 @@ class LLMApi:
         async def process_item(index: int, messages: Union[str, List[Union[str, dict, Message]]]):
             async with semaphore:
                 logger.info(f"Processing prompt {index} of {num_prompts}")
-                results[index] = await self._run_single_async(messages, tools, max_tool_calls, model=model, **kwargs)
+                try:
+                    results[index] = await self._run_single_async(
+                        messages, tools, max_tool_calls, model=model,
+                        strict_response_format=strict_response_format, **kwargs
+                    )
+                except Exception as e:
+                    if not return_exceptions:
+                        raise
+                    results[index] = e
                 logger.info(f"Received response for prompt {index} of {num_prompts}")
                 if sleep_interval is not None:
                     await asyncio.sleep(sleep_interval)
