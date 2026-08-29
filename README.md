@@ -71,9 +71,11 @@ AWS_ACCESS_KEY_ID=your_access_key
 AWS_SECRET_ACCESS_KEY=your_secret_key
 AWS_REGION=us-west-2
 
-# For Azure OpenAI / Versa models
+# For Azure OpenAI / Versa models (see "Using Azure OpenAI" example below)
 VERSA_API_KEY=your_versa_api_key
 VERSA_ENDPOINT=https://your-endpoint.openai.azure.com/general
+# Optional: override the default API version (defaults to 2024-10-21)
+# VERSA_API_VERSION=2024-10-21
 
 # For a local OpenAI-compatible server (vLLM, LM Studio, etc.)
 # Only needed if you don't pass api_base/api_key explicitly to the completion function.
@@ -110,8 +112,11 @@ load_dotenv()
 
 ### Azure OpenAI (Versa)
 
+**Note:** Azure models require the `make_versa_openai_completion` wrapper. See [Using Azure OpenAI](#using-azure-openai-versa) for setup.
+
 - `VersaOpenAI.GPT4_O_2024_08` - GPT-4o (August 2024)
 - `VersaOpenAI.GPT4_O_MINI_2024_07` - GPT-4o Mini (July 2024)
+- `VersaOpenAI.GPT4_1_MINI_2025_04` - GPT-4.1 Mini (April 2025)
 - `VersaOpenAI.GPT5_2025_08` - GPT-5 (August 2025)
 - And more...
 
@@ -154,6 +159,45 @@ result = api.run(
 ```
 
 You can also set `OPENAI_API_BASE` and `OPENAI_API_KEY` in your `.env` instead of passing them to `wrap_completion_function`. For Ollama, use the `ollama/` prefix (e.g. `model="ollama/llama3.3"`) with `OLLAMA_API_BASE`.
+
+### Using Azure OpenAI (Versa)
+
+Azure OpenAI models require additional configuration. Use the `make_versa_openai_completion` wrapper which reads credentials from environment variables:
+
+```python
+from lab_llm import LLMApi, wrap_completion_function, CachingCompletion
+from lab_llm.versa.openai import make_versa_openai_completion
+from lab_llm.constants import VersaOpenAI
+import dotenv
+
+dotenv.load_dotenv()  # Loads VERSA_API_KEY and VERSA_ENDPOINT
+
+# Create Azure-configured completion function
+versa_completion = make_versa_openai_completion()
+
+api = LLMApi(wrap_completion_function(
+    versa_completion,
+    cache=CachingCompletion("./llmapi_cache.db")
+))
+
+result = api.run("What is the capital of France?", model=VersaOpenAI.GPT4_1_MINI_2025_04)
+print(result)
+```
+
+**Required environment variables:**
+- `VERSA_API_KEY` - Your Azure OpenAI API key
+- `VERSA_ENDPOINT` - Your Azure endpoint URL (e.g., `https://your-resource.openai.azure.com/general`)
+- `VERSA_API_VERSION` (optional) - API version, defaults to `2024-10-21`
+
+You can also pass these directly to the wrapper:
+
+```python
+versa_completion = make_versa_openai_completion(
+    api_key="your-key",
+    endpoint="https://your-endpoint.openai.azure.com/general",
+    api_version="2024-10-21"
+)
+```
 
 ### Structured Output (Pydantic)
 
