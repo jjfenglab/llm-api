@@ -40,6 +40,11 @@ class OpenAI:
     GPT5_4_MINI = "gpt-5.4-mini"
     GPT5_4 = "gpt-5.4"
     GPT5_5 = "gpt-5.5"
+    GPT5_5_2026_04_23 = "gpt-5.5-2026-04-23"
+
+
+class Gemini:
+    GEMINI_3_1_PRO_PREVIEW = "gemini/gemini-3.1-pro-preview"
 
 
 class Claude:
