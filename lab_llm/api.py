@@ -243,9 +243,13 @@ class LLMApi:
         max_parallel_jobs : int, optional
             Maximum number of requests to run concurrently; each unit is one
             worker thread issuing a blocking ``run()`` call, so values in the
-            low hundreds are fine for I/O-bound API calls. Defaults to the CPU
-            count available to the process when ``None``. Note: raising this
-            raises the real request rate against the provider — pair large
+            low hundreds are fine for I/O-bound API calls. Must be in
+            [1, 512]; raises ``ValueError`` otherwise. Defaults to the CPU
+            count available to the process when ``None``. Sizing rule of
+            thumb against provider rate limits: sustainable concurrency ≈
+            (requests/min limit) / 60 × mean request latency in seconds —
+            per-deployment Versa limits are in the lab wiki's rate-limit
+            table. Raising this raises the real request rate, so pair large
             values with ``num_retries`` (see below) and/or ``sleep_interval``.
         sleep_interval : float, optional
             Seconds to sleep after each completed request (within a worker).
@@ -278,6 +282,12 @@ class LLMApi:
         """
         if max_parallel_jobs is None:
             max_parallel_jobs = _default_max_parallel_jobs()
+        if not 1 <= max_parallel_jobs <= 512:
+            raise ValueError(
+                f"max_parallel_jobs={max_parallel_jobs} is outside [1, 512]; "
+                "each unit is one worker thread, so larger values are almost "
+                "certainly a typo or the wrong knob for rate limiting"
+            )
 
         # Dedicated executor sized to the requested parallelism: the asyncio
         # default executor is capped at min(32, cpu_count + 4) threads, which
