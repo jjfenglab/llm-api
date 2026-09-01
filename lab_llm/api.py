@@ -1,5 +1,6 @@
 import os
 import asyncio
+import concurrent.futures
 import json
 from typing_extensions import Unpack
 from typing import Any, List, Optional, Union, Callable
@@ -21,6 +22,10 @@ class ToolExecutionError(Exception):
     pass
 
 logger = logging.getLogger(__name__)
+
+def _default_max_parallel_jobs() -> int:
+    """CPU count available to this process: respects scheduler affinity on 3.13+ (os.process_cpu_count), so a slurm allocation doesn't default to the whole node."""
+    return getattr(os, "process_cpu_count", os.cpu_count)() or 4
 
 def wrap_completion_function(func: CompletionFunction,
                              cache: Optional[CachingCompletion] = None,
@@ -187,12 +192,16 @@ class LLMApi:
         max_tool_calls: Optional[int] = None,
         model: Optional[str] = None,
         strict_response_format: bool = False,
+        executor: Optional[concurrent.futures.ThreadPoolExecutor] = None,
         **kwargs: Unpack[CompletionKwargs]
     ) -> Any:
-        # Run the synchronous version in an executor to avoid blocking
-        loop = asyncio.get_event_loop()
+        # Run the synchronous version in an executor to avoid blocking.
+        # executor=None falls back to the asyncio default executor, whose
+        # min(32, cpu_count + 4) thread cap silently limits concurrency;
+        # run_batch always passes a dedicated executor for this reason.
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None,
+            executor,
             partial(
                 self.run,
                 messages,
@@ -232,8 +241,12 @@ class LLMApi:
             Maximum tool calls per individual request. Passed unchanged to each
             ``run()`` invocation.
         max_parallel_jobs : int, optional
-            Maximum number of requests to run concurrently. Defaults to
-            ``os.cpu_count()`` when ``None``.
+            Maximum number of requests to run concurrently; each unit is one
+            worker thread issuing a blocking ``run()`` call, so values in the
+            low hundreds are fine for I/O-bound API calls. Defaults to the CPU
+            count available to the process when ``None``. Note: raising this
+            raises the real request rate against the provider — pair large
+            values with ``num_retries`` (see below) and/or ``sleep_interval``.
         sleep_interval : float, optional
             Seconds to sleep after each completed request (within a worker).
             Useful for rate-limiting. No sleep is applied when ``None``.
@@ -248,6 +261,12 @@ class LLMApi:
             Forwarded to each ``run()`` call; see ``run()``.
         **kwargs : CompletionKwargs
             Additional keyword arguments forwarded to every ``run()`` call.
+            In particular ``num_retries=N`` is forwarded to litellm, which
+            retries rate-limit (429) and transient connection errors with
+            exponential backoff; lab_llm itself performs no retries, so at
+            high ``max_parallel_jobs`` a 429 without ``num_retries`` either
+            aborts the batch or (with ``return_exceptions=True``) surfaces as
+            an exception in the results.
 
         Returns
         -------
@@ -258,9 +277,16 @@ class LLMApi:
             ``return_exceptions`` is True.
         """
         if max_parallel_jobs is None:
-            max_parallel_jobs = os.cpu_count()
+            max_parallel_jobs = _default_max_parallel_jobs()
 
-        # Use asyncio.Semaphore with Queue for limited parallelism
+        # Dedicated executor sized to the requested parallelism: the asyncio
+        # default executor is capped at min(32, cpu_count + 4) threads, which
+        # would silently limit true concurrency below max_parallel_jobs.
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_parallel_jobs, thread_name_prefix="lab_llm_batch"
+        )
+        # The semaphore bounds in-flight submissions so sleep_interval throttles
+        # dispatch and a failed batch leaves few queued futures to cancel.
         semaphore = asyncio.Semaphore(max_parallel_jobs)
         results = [None] * len(messages_list)
 
@@ -272,7 +298,8 @@ class LLMApi:
                 try:
                     results[index] = await self._run_single_async(
                         messages, tools, max_tool_calls, model=model,
-                        strict_response_format=strict_response_format, **kwargs
+                        strict_response_format=strict_response_format,
+                        executor=executor, **kwargs
                     )
                 except Exception as e:
                     if not return_exceptions:
@@ -286,5 +313,11 @@ class LLMApi:
             process_item(i, messages)
             for i, messages in enumerate(messages_list)
         ]
-        await asyncio.gather(*tasks)
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            # On success all work is done and this is instant; on a propagated
+            # exception it cancels queued-but-unstarted calls while already
+            # running ones finish in background threads and are discarded.
+            executor.shutdown(wait=False, cancel_futures=True)
         return results

@@ -189,6 +189,8 @@ class CachingCompletion(CompletionFunctionWrapper):
 
         Removes:
         - Any parameter starting with "api_"
+        - Transport-only parameters that don't affect the response
+          (num_retries), so enabling retries doesn't fork the key space
 
         Converts:
         - response_format from pydantic model to dict if necessary
@@ -203,7 +205,7 @@ class CachingCompletion(CompletionFunctionWrapper):
 
         for key, value in kwargs.items():
             # Skip any parameter starting with "api_"
-            if key.startswith('api_'):
+            if key.startswith('api_') or key == 'num_retries':
                 continue
 
             # Handle response_format conversion
