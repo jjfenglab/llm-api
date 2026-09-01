@@ -61,10 +61,13 @@ Create a `.env` file in your project directory with the required credentials:
 
 ```bash
 # For OpenAI models
-OPENAI_ACCESS_TOKEN=your_openai_api_key
+OPENAI_API_KEY=your_openai_api_key
 
 # For Claude models
 ANTHROPIC_API_KEY=your_claude_api_key
+
+# For Google Gemini models
+GEMINI_API_KEY=your_gemini_api_key
 
 # For AWS Bedrock models (Claude, Llama, Cohere, Qwen)
 AWS_ACCESS_KEY_ID=your_access_key
@@ -109,6 +112,10 @@ load_dotenv()
 - `Claude.HAIKU_4_6` - Claude Haiku 4.6
 - `Claude.SONNET_4_6` - Claude Sonnet 4.6
 - `Claude.OPUS_4_6` - Claude Opus 4.6
+
+### Google Gemini (Direct API)
+
+- `Gemini.GEMINI_3_1_PRO_PREVIEW` - Gemini 3.1 Pro Preview
 
 ### Azure OpenAI (Versa)
 
