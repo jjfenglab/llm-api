@@ -332,6 +332,7 @@ class CachingCompletion(CompletionFunctionWrapper):
             Reconstructed ModelResponse
         """
         response_dict = json.loads(cached_json)
+        response_dict["_cache_hit"] = True
 
         if not self.return_original_usage:
             # Set the usage statistics to zero

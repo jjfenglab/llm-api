@@ -2,6 +2,7 @@ import os
 import asyncio
 import concurrent.futures
 import json
+import threading
 from typing_extensions import Unpack
 from typing import Any, List, Optional, Union, Callable
 from collections.abc import Sequence, Mapping
@@ -69,6 +70,7 @@ class LLMApi:
         else:
             self.usage_tracker = None
         self.completion = completion_function
+        self._run_cache_hit = threading.local()
 
     def _execute_tool_call(self, tool_call: ToolCall, tools: Mapping[str, Tool]) -> str:
         func_name = tool_call["function"]["name"]
@@ -125,6 +127,7 @@ class LLMApi:
         """
         normalized_messages = normalize_messages(messages)
         normalized_tools = normalize_tools(tools)
+        self._run_cache_hit.value = False
 
         tool_call_count = 0
 
@@ -140,6 +143,8 @@ class LLMApi:
                 tools=tools_for_call,
                 **kwargs
             )
+            if getattr(response, '_cache_hit', False):
+                self._run_cache_hit.value = True
 
             message = response.choices[0].message
 
@@ -194,16 +199,13 @@ class LLMApi:
         strict_response_format: bool = False,
         executor: Optional[concurrent.futures.ThreadPoolExecutor] = None,
         **kwargs: Unpack[CompletionKwargs]
-    ) -> Any:
+    ) -> tuple[Any, bool]:
         # Run the synchronous version in an executor to avoid blocking.
         # executor=None falls back to the asyncio default executor, whose
         # min(32, cpu_count + 4) thread cap silently limits concurrency;
         # run_batch always passes a dedicated executor for this reason.
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            executor,
-            partial(
-                self.run,
+        def run_and_get_cache_hit():
+            result = self.run(
                 messages,
                 tools=tools,
                 max_tool_calls=max_tool_calls,
@@ -211,7 +213,11 @@ class LLMApi:
                 strict_response_format=strict_response_format,
                 **kwargs
             )
-        )
+            cache_hit = getattr(self._run_cache_hit, 'value', False)
+            return result, cache_hit
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(executor, run_and_get_cache_hit)
 
     async def run_batch(
         self,
@@ -299,6 +305,7 @@ class LLMApi:
         # dispatch and a failed batch leaves few queued futures to cancel.
         semaphore = asyncio.Semaphore(max_parallel_jobs)
         results = [None] * len(messages_list)
+        cache_hits = [False] * len(messages_list)
 
         num_prompts = len(messages_list)
 
@@ -306,11 +313,13 @@ class LLMApi:
             async with semaphore:
                 logger.info(f"Processing prompt {index} of {num_prompts}")
                 try:
-                    results[index] = await self._run_single_async(
+                    result, cache_hit = await self._run_single_async(
                         messages, tools, max_tool_calls, model=model,
                         strict_response_format=strict_response_format,
                         executor=executor, **kwargs
                     )
+                    results[index] = result
+                    cache_hits[index] = cache_hit
                 except Exception as e:
                     if not return_exceptions:
                         raise
@@ -330,4 +339,10 @@ class LLMApi:
             # exception it cancels queued-but-unstarted calls while already
             # running ones finish in background threads and are discarded.
             executor.shutdown(wait=False, cancel_futures=True)
+
+        num_cache_hits = sum(cache_hits)
+        logger.info(
+            "run_batch complete: %d/%d cache hits",
+            num_cache_hits, len(messages_list)
+        )
         return results
