@@ -22,6 +22,14 @@ from .usage_tracker import UsageTracker
 class ToolExecutionError(Exception):
     pass
 
+
+class ResponseFormatError(Exception):
+    """Raised when the LLM output fails to parse into the expected response_format."""
+    def __init__(self, message: str, raw_content: str, original_error: Exception):
+        super().__init__(message)
+        self.raw_content = raw_content
+        self.original_error = original_error
+
 logger = logging.getLogger(__name__)
 
 def _default_max_parallel_jobs() -> int:
@@ -160,9 +168,13 @@ class LLMApi:
                     # It's a Pydantic model class
                     try:
                         return response_format.model_validate_json(content)
-                    except Exception:
+                    except Exception as e:
                         if strict_response_format:
-                            raise
+                            raise ResponseFormatError(
+                                f"Failed to parse LLM output as {response_format.__name__}: {e}",
+                                raw_content=content,
+                                original_error=e,
+                            ) from e
                         # Fallback to string if parsing fails
                         return content
                 elif response_format:
