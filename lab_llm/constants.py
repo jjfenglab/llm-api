@@ -15,6 +15,7 @@ class VersaOpenAi(str, Enum):
     GPT5_2025_08 = "gpt-5-2025-08-07"
     GPT5_MINI_2025_08 = "gpt-5-mini-2025-08-07"
     GPT5_NANO_2025_08 = "gpt-5-nano-2025-08-07"
+    GPT5_6_TERRA_2026_07 = "gpt-5.6-terra-2026-07-09"
 
 
 class OpenAi(str, Enum):
@@ -86,6 +87,7 @@ REASONING_MODELS = {
     VersaOpenAi.GPT5_2025_08,
     VersaOpenAi.GPT5_MINI_2025_08,
     VersaOpenAi.GPT5_NANO_2025_08,
+    VersaOpenAi.GPT5_6_TERRA_2026_07,
 }
 is_reasoning_model = lambda x: x in REASONING_MODELS
 
