@@ -10,7 +10,7 @@ A unified Python library for inference across multiple Large Language Model prov
 ## Features
 
 - **Multi-provider support**: Unified API for OpenAI, Anthropic, AWS Bedrock Claude, Azure OpenAI, and local OpenAI-compatible servers (vLLM, LM Studio, Ollama)
-- **Response caching**: DuckDB-based caching to avoid redundant API calls and reduce costs
+- **Response caching**: SQLAlchemy-backed caching (DuckDB by default; PostgreSQL, SQLite, MySQL also supported) to avoid redundant API calls and reduce costs
 - **Batch processing**: Async batch inference with configurable concurrency
 - **Structured output**: Pydantic model validation for enforcing response schemas
 - **Error tracking**: Comprehensive error classification and JSONL logging for debugging
@@ -42,7 +42,7 @@ import dotenv
 dotenv.load_dotenv()
 
 # Create the LLMApi instance by specifying a completion function,
-# which we wrap with a DuckDB-based cache to store previous outputs
+# which we wrap with a SQLAlchemy-backed cache to store previous outputs
 api = LLMApi(wrap_completion_function(
     litellm.completion,
     cache=CachingCompletion("./llmapi_cache.db")
@@ -54,6 +54,23 @@ print(f"Result: {result}\n")
 ```
 
 See the Python scripts in `examples/` for more examples.
+
+## Caching Backends
+
+`CachingCompletion` uses [SQLAlchemy](https://www.sqlalchemy.org/) under the hood, so it works with any supported database. The `db_path` argument accepts either a plain filepath or a SQLAlchemy connection URL:
+
+```python
+# Plain filepath — automatically uses DuckDB
+cache = CachingCompletion("./llmapi_cache.db")
+
+# Explicit DuckDB URL
+cache = CachingCompletion("duckdb:///llmapi_cache.db")
+
+# SQLite (no extra dependencies)
+cache = CachingCompletion("sqlite:///llmapi_cache.db")
+```
+
+The required `completion_cache` table is created automatically on first use if it does not already exist.
 
 ## Configuration
 
@@ -192,6 +209,7 @@ print(result)
 ```
 
 **Required environment variables:**
+
 - `VERSA_API_KEY` - Your Azure OpenAI API key
 - `VERSA_ENDPOINT` - Your Azure endpoint URL (e.g., `https://your-resource.openai.azure.com/general`)
 - `VERSA_API_VERSION` (optional) - API version, defaults to `2024-10-21`
