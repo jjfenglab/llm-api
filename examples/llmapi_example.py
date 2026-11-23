@@ -63,6 +63,7 @@ def main():
         logger=logging.getLogger(__name__)
     )
     cache = CachingCompletion("./llmapi_cache.db")
+    # cache = CachingCompletion("sqlite:///llmapi_cache_sqlite.db") # SQLite version
 
     # Create the LLMApi instance
     api = LLMApi(wrap_completion_function(

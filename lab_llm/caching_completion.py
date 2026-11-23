@@ -1,19 +1,24 @@
 """
-CachingCompletion wrapper for litellm.completion with DuckDB caching.
+CachingCompletion wrapper for litellm.completion with SQLAlchemy-backed caching.
 
 Implements the CompletionFunctionWrapper protocol to provide transparent caching
 of LLM completion calls. Works as a decorator around any CompletionFunction.
+Supports any SQLAlchemy-compatible database (DuckDB, PostgreSQL, SQLite, MySQL, etc.).
 """
 
 import os
 import json
+import datetime
 import hashlib
 import logging
 from functools import wraps
 from typing import Optional, List, Any
 from pathlib import Path
 
-import duckdb
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Text, DateTime, Index
+from sqlalchemy import select, insert
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.sql import func
 from litellm import ModelResponse
 
 from .types import CompletionFunction, CompletionFunctionWrapper
@@ -25,9 +30,12 @@ logger = logging.getLogger(__name__)
 
 class CachingCompletion(CompletionFunctionWrapper):
     """
-    A wrapper that adds caching to completion functions using DuckDB storage.
+    A wrapper that adds caching to completion functions using SQLAlchemy storage.
 
-    Example usage:
+    Supports any SQLAlchemy-compatible database backend. Plain filepaths are
+    automatically converted to DuckDB URLs for backwards compatibility.
+
+    Example usage with a plain filepath (DuckDB, backwards compatible):
         completion = CachingCompletion("./cache.db")(litellm.completion)
         response = completion(
             model="gpt-4o",
@@ -35,8 +43,12 @@ class CachingCompletion(CompletionFunctionWrapper):
             temperature=0.7
         )
 
-    Can be composed with other wrappers. Note that this should typically be 
-    added directly around the original completion function, to ensure that 
+    Example usage with a SQLAlchemy connection string:
+        completion = CachingCompletion("postgresql://user:pass@host/dbname")(litellm.completion)
+        completion = CachingCompletion("sqlite:///./cache.db")(litellm.completion)
+
+    Can be composed with other wrappers. Note that this should typically be
+    added directly around the original completion function, to ensure that
     the parameters added by other wrappers are saved.
 
         completion = ModelRamp(["gpt-4o-mini", "gpt-5"])(
@@ -46,25 +58,56 @@ class CachingCompletion(CompletionFunctionWrapper):
         )
     """
 
+    _metadata = MetaData()
+    _cache_table = Table(
+        'completion_cache', _metadata,
+        Column('id', Integer, primary_key=True, autoincrement=True),
+        Column('cache_key', String, nullable=False, unique=True),
+        Column('model', String, nullable=False),
+        Column('response_json', Text, nullable=False),
+        Column('created_at', DateTime, default=func.now()),
+    )
+    _index = Index('idx_cache_key', _cache_table.c.cache_key)
+
     def __init__(self, db_path: str | Path, return_original_usage: bool = False):
         """
         Initialize the caching wrapper.
 
         Args:
-            db_path: Path to the DuckDB database file
-            return_original_usage: Whether or not to return original token usage counts 
+            db_path: Path to the database. Accepts either:
+                - A plain filepath (str or pathlib.Path), e.g. ``"./cache.db"`` or
+                  ``Path("/data/cache.db")``. The file is opened as a DuckDB database
+                  for backwards compatibility with existing cache files.
+                - A SQLAlchemy connection string, e.g.
+                  ``"duckdb:///./cache.db"``,
+                  ``"postgresql://user:pass@localhost/dbname"``,
+                  ``"sqlite:///./cache.db"``, or
+                  ``"mysql+pymysql://user:pass@localhost/dbname"``.
+                  Any URL containing ``://`` is treated as a SQLAlchemy URL and
+                  passed directly to ``create_engine()``.
+
+                The required table (``completion_cache``) is created automatically
+                if it does not already exist.
+            return_original_usage: Whether or not to return original token usage counts
                 in responses that are loaded from cache (default is to set the token
-                usage to zero, reflecting the actual cost of the query). 
+                usage to zero, reflecting the actual cost of the query).
         """
-        self.db_path = Path(db_path)
         self.return_original_usage = return_original_usage
-        self._ensure_db_exists()
-        needs_creation = not self.db_path.exists()
-        self.connection = duckdb.connect(self.db_path)
-        if needs_creation: self._create_tables()
+
+        if self._is_connection_string(db_path):
+            url = str(db_path)
+        else:
+            # Plain filepath — ensure parent directory exists, then build DuckDB URL
+            self._ensure_db_dir_exists(db_path)
+            url = self._filepath_to_url(db_path)
+
+        self.engine = create_engine(url)
+        # Always create tables if they don't exist (idempotent)
+        self._metadata.create_all(self.engine, checkfirst=True)
 
     def __del__(self):
-        if self.connection: self.connection.close()
+        if hasattr(self, 'engine') and self.engine:
+            self.engine.dispose()
 
     def __call__(self, func: CompletionFunction) -> CompletionFunction:
         """
@@ -80,7 +123,7 @@ class CachingCompletion(CompletionFunctionWrapper):
         def wrapped_completion(model: str, messages: List = None, **kwargs) -> ModelResponse:
             if model is None:
                 raise ValueError(f"model cannot be None for CachingCompletion. Ensure that if you are routing models with a decorator, this happens within the completion function passed to CachingCompletion.")
-            
+
             # Check if we should cache this request
             if not self._should_cache(**kwargs):
                 return func(model, messages=messages, **kwargs)
@@ -116,32 +159,20 @@ class CachingCompletion(CompletionFunctionWrapper):
 
         return wrapped_completion
 
-    def _ensure_db_exists(self):
-        """Ensure the database directory exists."""
-        db_dir = os.path.dirname(self.db_path)
+    def _is_connection_string(self, db_path: str | Path) -> bool:
+        """Return True if db_path looks like a SQLAlchemy URL (contains '://')."""
+        return '://' in str(db_path)
+
+    def _filepath_to_url(self, db_path: str | Path) -> str:
+        """Convert a plain filepath to a DuckDB SQLAlchemy URL."""
+        path = Path(db_path).resolve()
+        return f"duckdb:///{path}"
+
+    def _ensure_db_dir_exists(self, db_path: str | Path):
+        """Ensure the parent directory of a file-based database path exists."""
+        db_dir = os.path.dirname(Path(db_path))
         if db_dir:
             Path(db_dir).mkdir(parents=True, exist_ok=True)
-
-    def _create_tables(self):
-        """Create the cache table if it doesn't exist."""
-        with self.connection.cursor() as cursor:
-            cursor.execute("""
-                    CREATE SEQUENCE id_sequence START 1;
-                    CREATE TABLE IF NOT EXISTS completion_cache (
-                        id INTEGER PRIMARY KEY DEFAULT nextval('id_sequence'),
-                        cache_key VARCHAR NOT NULL UNIQUE,
-                        model VARCHAR NOT NULL,
-                        response_json TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-
-            # Create indexes for performance
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_cache_key
-                ON completion_cache(cache_key);
-            """)
-            cursor.commit()
 
     def _should_cache(self, **kwargs) -> bool:
         """
@@ -215,7 +246,7 @@ class CachingCompletion(CompletionFunctionWrapper):
                 else:
                     # Pydantic model
                     filtered[key] = value.model_json_schema()
-                    
+
             else:
                 filtered[key] = value
 
@@ -262,21 +293,16 @@ class CachingCompletion(CompletionFunctionWrapper):
         Returns:
             ModelResponse if found, None otherwise
         """
-        with self.connection.cursor() as cursor:
-            result = cursor.execute(
-                """
-                SELECT response_json
-                FROM completion_cache
-                WHERE cache_key = ?
-                """,
-                [cache_key]
-            ).fetchone()
+        stmt = select(self._cache_table.c.response_json).where(
+            self._cache_table.c.cache_key == cache_key
+        )
+        with self.engine.connect() as conn:
+            result = conn.execute(stmt).fetchone()
 
         if result is None:
             return None
 
-        response_json = result[0]
-        return self._build_model_response_from_cache(response_json)
+        return self._build_model_response_from_cache(result[0])
 
     def _cache_response(self, cache_key: str, model: str, response: ModelResponse):
         """
@@ -287,20 +313,18 @@ class CachingCompletion(CompletionFunctionWrapper):
             model: Model name used
             response: ModelResponse to cache
         """
-        # Serialize response to JSON
         response_json = self._serialize_model_response(response)
-
-        with self.connection.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO completion_cache
-                (cache_key, model, response_json, created_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT DO NOTHING;
-                """,
-                [cache_key, model, response_json]
-            )
-            cursor.commit()
+        stmt = insert(self._cache_table).values(
+            cache_key=cache_key,
+            model=model,
+            response_json=response_json,
+            created_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(stmt)
+        except IntegrityError:
+            pass  # Duplicate key — expected; mirrors original ON CONFLICT DO NOTHING
 
     def _serialize_model_response(self, response: ModelResponse) -> str:
         """

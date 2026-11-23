@@ -61,28 +61,65 @@ class TestCachingCompletion:
 
     def test_init_creates_database_and_tables(self, temp_db_path):
         """Test that initialization creates database and required tables."""
+        db_file = temp_db_path / "test.db"
+
         # Database shouldn't exist initially
-        assert not os.path.exists(temp_db_path / "test.db")
+        assert not os.path.exists(db_file)
 
         # Create CachingCompletion
-        cache = CachingCompletion(temp_db_path / "test.db")
+        cache = CachingCompletion(db_file)
 
-        # Database should now exist
-        assert os.path.exists(temp_db_path / "test.db")
+        # Database file should now exist
+        assert os.path.exists(db_file)
 
-        # Verify table exists by trying to query it
-        import duckdb
-        with duckdb.connect(temp_db_path / "test.db") as conn:
-            result = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='completion_cache'"
-            ).fetchall()
-            # Note: DuckDB uses different system tables, let's just try to query the table
-            try:
-                conn.execute("SELECT COUNT(*) FROM completion_cache").fetchone()
-                table_exists = True
-            except Exception:
-                table_exists = False
-            assert table_exists
+        # Verify table exists via SQLAlchemy inspector
+        from sqlalchemy import inspect as sa_inspect
+        insp = sa_inspect(cache.engine)
+        assert 'completion_cache' in insp.get_table_names()
+
+    def test_init_idempotent(self, temp_db_path):
+        """Test that creating a second CachingCompletion on the same path doesn't error."""
+        db_file = temp_db_path / "test.db"
+        cache1 = CachingCompletion(db_file)
+        # Should not raise even though table already exists
+        cache2 = CachingCompletion(db_file)
+        from sqlalchemy import inspect as sa_inspect
+        assert 'completion_cache' in sa_inspect(cache2.engine).get_table_names()
+
+    def test_connection_string_detection(self, caching_completion):
+        """Test that connection strings are correctly detected vs plain filepaths."""
+        cache = caching_completion
+
+        # Plain filepaths should NOT be detected as connection strings
+        assert not cache._is_connection_string("./cache.db")
+        assert not cache._is_connection_string("/abs/path/cache.db")
+        assert not cache._is_connection_string(Path("cache.db"))
+        assert not cache._is_connection_string("cache.db")
+
+        # SQLAlchemy URLs should be detected
+        assert cache._is_connection_string("postgresql://localhost/db")
+        assert cache._is_connection_string("sqlite:///./cache.db")
+        assert cache._is_connection_string("duckdb:///./cache.db")
+        assert cache._is_connection_string("mysql+pymysql://user:pass@localhost/db")
+
+    def test_init_with_sqlite_connection_string(self, temp_db_path, mock_completion_func):
+        """Test that a SQLAlchemy connection string (SQLite) is accepted and works end-to-end."""
+        url = f"sqlite:///{temp_db_path / 'sqlite_test.db'}"
+        cache = CachingCompletion(url)
+
+        # Table must exist
+        from sqlalchemy import inspect as sa_inspect
+        insp = sa_inspect(cache.engine)
+        assert 'completion_cache' in insp.get_table_names()
+
+        # Full cache lifecycle
+        wrapped = cache(mock_completion_func)
+        response = wrapped("gpt-4o", [{"role": "user", "content": "Hello"}])
+        assert response.choices[0].message.content == "Test response"
+
+        # Response should have been cached
+        cache_key = cache._compute_cache_key("gpt-4o", [{"role": "user", "content": "Hello"}], {})
+        assert cache._get_cached_response(cache_key) is not None
 
     def test_filter_kwargs_for_cache(self, caching_completion):
         """Test kwargs filtering for cache key computation."""
@@ -235,8 +272,9 @@ class TestCachingCompletion:
 
         wrapped = cache(normal_func)
 
-        # Test with invalid database path to trigger errors
-        cache.db_path = "/invalid/path/that/does/not/exist.db"
+        # Corrupt the engine so DB operations fail
+        cache.engine.dispose()
+        cache.engine = None
 
         # Should still work despite cache errors (graceful degradation)
         response = wrapped("gpt-4o", [{"role": "user", "content": "Hello"}])
